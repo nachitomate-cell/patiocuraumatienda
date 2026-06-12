@@ -65,7 +65,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="text-xs flex items-center gap-2">
-            {configured && user && (
+            {configured && user && !user.isAnonymous && (
               <>
                 <span className="text-slate-300 hidden md:inline">{user.email}</span>
                 <button

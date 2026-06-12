@@ -4,10 +4,12 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
+  signInAnonymously,
   signOut,
   type User,
 } from "firebase/auth";
 import { getAuthInstance, isFirebaseConfigured } from "./firebase";
+import { LOGIN_HABILITADO } from "./config";
 
 interface AuthCtx {
   user: User | null;
@@ -29,6 +31,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     return onAuthStateChanged(getAuthInstance(), (u) => {
+      // Modo presentación: si no hay login y no hay usuario, entra anónimo
+      // para que Firestore siga funcionando sin pantalla de inicio de sesión.
+      if (!u && !LOGIN_HABILITADO) {
+        signInAnonymously(getAuthInstance()).catch(() => setLoading(false));
+        return;
+      }
       setUser(u);
       setLoading(false);
     });

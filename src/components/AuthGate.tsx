@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { LOGIN_HABILITADO } from "@/lib/config";
 
 // Envuelve las paginas privadas: exige login y avisa si Firebase no esta configurado.
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -26,6 +27,21 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (loading) {
     return <div className="mt-20 text-center text-slate-500">Cargando…</div>;
+  }
+
+  // Modo presentación: sin login. Si el acceso anónimo está activo, entra directo.
+  if (!LOGIN_HABILITADO) {
+    if (user) return <>{children}</>;
+    return (
+      <div className="mx-auto max-w-xl mt-16 bg-amber-50 border border-amber-300 rounded-lg p-6">
+        <h1 className="text-lg font-bold text-amber-900">Falta habilitar el acceso anónimo</h1>
+        <p className="mt-2 text-sm text-amber-900">
+          El login está desactivado para la presentación. Habilita el acceso anónimo en
+          Firebase Console → <b>Authentication → Sign-in method → Anónimo → Habilitar</b>, y
+          recarga la página.
+        </p>
+      </div>
+    );
   }
 
   if (!user) {
