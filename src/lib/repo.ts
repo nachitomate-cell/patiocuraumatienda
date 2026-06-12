@@ -1,0 +1,183 @@
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  limit,
+  writeBatch,
+  runTransaction,
+  increment,
+  documentId,
+} from "firebase/firestore";
+import { getDb } from "./firebase";
+import {
+  subtotalLinea,
+  type Entrada,
+  type LineaEntrada,
+  type LineaVenta,
+  type Producto,
+  type Venta,
+} from "./types";
+
+const PRODUCTOS = "productos";
+const VENTAS = "ventas";
+const ENTRADAS = "entradas";
+const CONTADORES = "contadores";
+
+export async function getProducto(codigo: string): Promise<Producto | null> {
+  const ref = doc(getDb(), PRODUCTOS, codigo.trim());
+  const snap = await getDoc(ref);
+  return snap.exists() ? (snap.data() as Producto) : null;
+}
+
+// Busqueda por prefijo de codigo (usa el id del documento). Limitada para
+// no leer todo el catalogo y mantener bajo el costo de Firestore.
+export async function buscarProductos(term: string, max = 30): Promise<Producto[]> {
+  const t = term.trim().toUpperCase();
+  if (!t) return [];
+  const hi = t + String.fromCharCode(0xf8ff);
+  const q = query(
+    collection(getDb(), PRODUCTOS),
+    where(documentId(), ">=", t),
+    where(documentId(), "<=", hi),
+    orderBy(documentId()),
+    limit(max)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Producto);
+}
+
+// Carga inicial del catalogo desde el Excel exportado. Escribe por lotes
+// (max 500 ops por batch en Firestore).
+export async function importarCatalogo(
+  productos: Producto[],
+  onProgress?: (hechos: number, total: number) => void
+): Promise<number> {
+  const db = getDb();
+  const CHUNK = 450;
+  let hechos = 0;
+  for (let i = 0; i < productos.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    for (const p of productos.slice(i, i + CHUNK)) {
+      batch.set(doc(db, PRODUCTOS, p.codigo), p, { merge: true });
+    }
+    await batch.commit();
+    hechos = Math.min(i + CHUNK, productos.length);
+    onProgress?.(hechos, productos.length);
+  }
+  return hechos;
+}
+
+// Correlativo NV-### atomico mediante un documento contador.
+export async function siguienteNroVenta(): Promise<string> {
+  const db = getDb();
+  const ref = doc(db, CONTADORES, "ventas");
+  const n = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const actual = snap.exists() ? (snap.data().ultimo as number) : 0;
+    const siguiente = actual + 1;
+    tx.set(ref, { ultimo: siguiente }, { merge: true });
+    return siguiente;
+  });
+  return "NV-" + String(n).padStart(3, "0");
+}
+
+// Confirma una venta: registra el documento y descuenta stock de forma atomica.
+export async function confirmarVenta(
+  venta: Omit<Venta, "creadoEn">
+): Promise<void> {
+  const db = getDb();
+  const batch = writeBatch(db);
+  const total = venta.items.reduce((s, l) => s + subtotalLinea(l), 0);
+
+  batch.set(doc(db, VENTAS, venta.nro), {
+    ...venta,
+    total,
+    creadoEn: Date.now(),
+  });
+
+  for (const l of venta.items) {
+    batch.update(doc(db, PRODUCTOS, l.codigo), {
+      stockActual: increment(-l.cantidad),
+    });
+  }
+  await batch.commit();
+}
+
+export async function ultimasVentas(max = 20): Promise<Venta[]> {
+  const q = query(
+    collection(getDb(), VENTAS),
+    orderBy("creadoEn", "desc"),
+    limit(max)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Venta);
+}
+
+// Correlativo EN-### para documentos de entrada.
+export async function siguienteNroEntrada(): Promise<string> {
+  const db = getDb();
+  const ref = doc(db, CONTADORES, "entradas");
+  const n = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const actual = snap.exists() ? (snap.data().ultimo as number) : 0;
+    const siguiente = actual + 1;
+    tx.set(ref, { ultimo: siguiente }, { merge: true });
+    return siguiente;
+  });
+  return "EN-" + String(n).padStart(3, "0");
+}
+
+// Registra una entrada (ingreso de stock). Suma stockActual de forma atomica.
+// Si el codigo no existe en el catalogo, crea el producto con los datos dados.
+export async function registrarEntrada(
+  nro: string,
+  fecha: string,
+  items: LineaEntrada[],
+  usuario?: string
+): Promise<void> {
+  const db = getDb();
+  const batch = writeBatch(db);
+
+  for (const l of items) {
+    const cod = l.codigo.trim();
+    // Documento de movimiento (historial de entradas).
+    batch.set(doc(collection(db, ENTRADAS)), {
+      nro,
+      fecha,
+      codigo: cod,
+      descripcion: l.descripcion,
+      lote: l.lote ?? "",
+      cantidad: l.cantidad,
+      creadoEn: Date.now(),
+      usuario: usuario ?? "",
+    });
+    // Suma al stock (crea el producto si no existia, con merge).
+    batch.set(
+      doc(db, PRODUCTOS, cod),
+      {
+        codigo: cod,
+        descripcion: l.descripcion,
+        lote: l.lote ?? "",
+        stockActual: increment(l.cantidad),
+      },
+      { merge: true }
+    );
+  }
+  await batch.commit();
+}
+
+export async function ultimasEntradas(max = 30): Promise<Entrada[]> {
+  const q = query(
+    collection(getDb(), ENTRADAS),
+    orderBy("creadoEn", "desc"),
+    limit(max)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Entrada);
+}
+
+export type { Entrada, LineaEntrada, LineaVenta, Producto, Venta };
