@@ -24,11 +24,21 @@ self.addEventListener("fetch", (event) => {
   // No interceptar llamadas a Firebase/Google: las gestiona el SDK.
   if (/firebase|googleapis|gstatic/.test(url.host)) return;
 
+  // Navegaciones (cambios de página): siempre red primero. Nunca servir una
+  // redireccion cacheada, que rompe la navegacion ("redirect mode not follow").
+  if (req.mode === "navigate") {
+    event.respondWith(
+      fetch(req).catch(() => caches.match("/venta").then((r) => r || caches.match("/")))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(req).then((cached) => {
       const network = fetch(req)
         .then((res) => {
-          if (res.ok && url.origin === self.location.origin) {
+          // Solo cachear respuestas finales (no redirecciones).
+          if (res.ok && !res.redirected && url.origin === self.location.origin) {
             const copy = res.clone();
             caches.open(CACHE).then((c) => c.put(req, copy));
           }

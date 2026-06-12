@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Settings, Upload, Download, FileSpreadsheet } from "lucide-react";
 import * as XLSX from "xlsx";
 import { importarCatalogo, ultimasVentas } from "@/lib/repo";
 import seed from "@/data/productos.seed.json";
@@ -64,14 +65,16 @@ export function AdminScreen() {
 
   return (
     <div className="space-y-4 max-w-2xl">
-      <div className="bg-white rounded-xl shadow p-4">
-        <h1 className="text-lg font-bold text-slate-900 mb-1">⚙️ Administración</h1>
+      <div className="bg-white rounded-xl shadow p-4 anim-in">
+        <h1 className="text-lg font-bold text-slate-900 mb-1 flex items-center gap-2">
+          <Settings className="text-cyan-600" size={22} /> Administración
+        </h1>
         <p className="text-sm text-slate-500">
           Carga inicial del catálogo y respaldos a archivo.
         </p>
       </div>
 
-      <div className="bg-white rounded-xl shadow p-4 space-y-3">
+      <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
         <h2 className="font-semibold text-slate-800">1. Importar catálogo a Firestore</h2>
         <p className="text-sm text-slate-500">
           Sube los {(seed as Producto[]).length} productos extraídos del Excel original a la
@@ -81,27 +84,28 @@ export function AdminScreen() {
         <button
           onClick={importar}
           disabled={busy}
-          className="bg-emerald-500 hover:bg-emerald-600 text-slate-900 font-semibold rounded px-4 py-2 disabled:opacity-50"
+          className="btn-accion bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-4 py-2.5 flex items-center gap-2 disabled:opacity-50"
         >
+          <Upload size={18} />
           {busy && prog ? `Importando ${prog.hechos}/${prog.total}…` : "Importar catálogo"}
         </button>
       </div>
 
-      <div className="bg-white rounded-xl shadow p-4 space-y-3">
+      <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
         <h2 className="font-semibold text-slate-800">2. Respaldos a archivo (.xlsx)</h2>
         <div className="flex gap-2 flex-wrap">
           <button
             onClick={exportarVentas}
             disabled={busy}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded px-4 py-2 disabled:opacity-50"
+            className="btn-accion bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-4 py-2.5 flex items-center gap-2 disabled:opacity-50"
           >
-            Exportar ventas
+            <Download size={18} /> Exportar ventas
           </button>
           <button
             onClick={exportarCatalogo}
-            className="bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded px-4 py-2"
+            className="btn-accion bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded-lg px-4 py-2.5 flex items-center gap-2"
           >
-            Exportar catálogo
+            <FileSpreadsheet size={18} /> Exportar catálogo
           </button>
         </div>
       </div>

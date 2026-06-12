@@ -1,11 +1,26 @@
 "use client";
 
-import { useState } from "react";
-import { getProducto, confirmarVenta, siguienteNroVenta } from "@/lib/repo";
+import { useRef, useState } from "react";
+import {
+  ShoppingBag,
+  Search,
+  Plus,
+  X,
+  Check,
+  Printer,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  AlertTriangle,
+  ScanLine,
+  Camera,
+} from "lucide-react";
+import { buscarParaVenta, confirmarVenta, siguienteNroVenta } from "@/lib/repo";
 import { subtotalLinea, type LineaVenta, type Producto } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { Ticket } from "@/components/Ticket";
+import { EscanerCamara } from "@/components/EscanerCamara";
 
 export function VentaScreen() {
   const { user } = useAuth();
@@ -18,6 +33,10 @@ export function VentaScreen() {
   const [items, setItems] = useState<LineaVenta[]>([]);
   const [msg, setMsg] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [verBoleta, setVerBoleta] = useState(false);
+  const [modoEscaner, setModoEscaner] = useState(false);
+  const [mostrarCamara, setMostrarCamara] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const total = items.reduce((s, l) => s + subtotalLinea(l), 0);
 
@@ -26,32 +45,54 @@ export function VentaScreen() {
     setEncontrado(null);
     const c = cod.trim();
     if (!c) return;
-    const p = await getProducto(c);
-    setEncontrado(p);
+    setEncontrado(await buscarParaVenta(c));
   }
 
-  function agregar() {
+  // Agrega un producto al carrito a partir de un código (manual, lector USB o cámara).
+  async function agregarPorCodigo(cod: string, cant = 1, desc = 0) {
     setMsg("");
-    const c = codigo.trim();
+    const c = cod.trim();
     if (!c) return setMsg("Ingrese un código de producto.");
-    if (cantidad <= 0) return setMsg("Cantidad inválida.");
-    const p = encontrado;
-    const linea: LineaVenta = {
-      codigo: c,
-      descripcion: p?.descripcion ?? "⚠️ Manual",
-      precio: p?.precio ?? 0,
-      cantidad,
-      descuento,
-    };
-    if (p && cantidad > p.stockActual) {
-      setMsg(`⚠️ Stock insuficiente: quedan ${p.stockActual} unid. de ${c}.`);
+    if (cant <= 0) return setMsg("Cantidad inválida.");
+    const p = await buscarParaVenta(c);
+    if (p && cant > p.stockActual) {
+      setMsg(`Stock insuficiente: quedan ${p.stockActual} unid. de ${p.descripcion}.`);
       return;
     }
-    setItems((prev) => [...prev, linea]);
+    const linea: LineaVenta = {
+      codigo: p?.codigo ?? c,
+      descripcion: p?.descripcion ?? "Manual",
+      precio: p?.precio ?? 0,
+      cantidad: cant,
+      descuento: desc,
+    };
+    // Si el mismo producto ya está en el carrito, suma cantidades.
+    setItems((prev) => {
+      const idx = prev.findIndex(
+        (l) => l.codigo === linea.codigo && l.descuento === linea.descuento
+      );
+      if (idx >= 0) {
+        const copia = [...prev];
+        copia[idx] = { ...copia[idx], cantidad: copia[idx].cantidad + cant };
+        return copia;
+      }
+      return [...prev, linea];
+    });
     setCodigo("");
     setCantidad(1);
     setDescuento(0);
     setEncontrado(null);
+    if (modoEscaner) inputRef.current?.focus();
+  }
+
+  function agregar() {
+    agregarPorCodigo(codigo, cantidad, descuento);
+  }
+
+  function activarEscaner() {
+    const n = !modoEscaner;
+    setModoEscaner(n);
+    if (n) setTimeout(() => inputRef.current?.focus(), 0);
   }
 
   function quitar(i: number) {
@@ -73,8 +114,8 @@ export function VentaScreen() {
         vendedor: user?.email ?? "",
       });
       setNro(nuevoNro);
-      setMsg(`✅ Venta ${nuevoNro} registrada y stock descontado.`);
-    } catch (e) {
+      setMsg(`Venta ${nuevoNro} registrada y stock descontado.`);
+    } catch {
       setMsg("Error al registrar la venta. Revise su conexión o reglas de Firestore.");
     } finally {
       setBusy(false);
@@ -97,11 +138,19 @@ export function VentaScreen() {
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
-      {/* Columna izquierda: búsqueda + carrito */}
+      {mostrarCamara && (
+        <EscanerCamara
+          onDetectar={(c) => agregarPorCodigo(c, 1, 0)}
+          onCerrar={() => setMostrarCamara(false)}
+        />
+      )}
+
       <div className="lg:col-span-2 space-y-4">
-        <div className="bg-white rounded-xl shadow p-4">
+        <div className="bg-white rounded-xl shadow p-4 anim-in">
           <div className="flex items-center justify-between mb-3">
-            <h1 className="text-lg font-bold text-slate-900">🛍️ Panel de venta</h1>
+            <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <ShoppingBag className="text-cyan-600" size={22} /> Panel de venta
+            </h1>
             <div className="text-sm text-slate-500">
               <span className="font-mono">{nro}</span> · {hoyISO()}
             </div>
@@ -114,21 +163,49 @@ export function VentaScreen() {
                 value={cliente}
                 onChange={(e) => setCliente(e.target.value)}
                 placeholder="Consumidor Final"
-                className="mt-1 w-full border rounded px-3 py-2"
+                className="mt-1 w-full border rounded-lg px-3 py-2"
               />
             </label>
           </div>
 
-          <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
+          {/* Barra de escaneo */}
+          <div className="flex flex-wrap gap-2 mb-3">
+            <button
+              onClick={activarEscaner}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold border ${
+                modoEscaner
+                  ? "bg-cyan-600 text-white border-cyan-600"
+                  : "bg-white text-cyan-700 border-cyan-300 hover:bg-cyan-50"
+              }`}
+            >
+              <ScanLine size={18} />
+              {modoEscaner ? "Modo escáner: ACTIVO" : "Modo escáner (lector USB)"}
+            </button>
+            <button
+              onClick={() => setMostrarCamara(true)}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold border bg-white text-slate-700 border-slate-300 hover:bg-slate-50"
+            >
+              <Camera size={18} /> Escanear con cámara
+            </button>
+          </div>
+
+          <div
+            className={`rounded-lg border p-3 ${
+              modoEscaner ? "border-cyan-400 bg-cyan-50" : "border-slate-200 bg-slate-50"
+            }`}
+          >
             <div className="grid sm:grid-cols-4 gap-3 items-end">
               <label className="text-sm sm:col-span-2">
-                <span className="text-slate-500">🔍 Código producto</span>
+                <span className="text-slate-500 flex items-center gap-1">
+                  <Search size={14} /> Código / código de barras
+                </span>
                 <input
+                  ref={inputRef}
                   value={codigo}
                   onChange={(e) => buscar(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && agregar()}
-                  placeholder="ej: CANE0056"
-                  className="mt-1 w-full border rounded px-3 py-2 font-mono uppercase"
+                  placeholder={modoEscaner ? "Escanee el producto…" : "ej: CANE0056"}
+                  className="mt-1 w-full border rounded-lg px-3 py-2 font-mono uppercase"
                 />
               </label>
               <label className="text-sm">
@@ -138,7 +215,7 @@ export function VentaScreen() {
                   min={1}
                   value={cantidad}
                   onChange={(e) => setCantidad(Number(e.target.value))}
-                  className="mt-1 w-full border rounded px-3 py-2"
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
                 />
               </label>
               <label className="text-sm">
@@ -149,7 +226,7 @@ export function VentaScreen() {
                   max={100}
                   value={descuento}
                   onChange={(e) => setDescuento(Number(e.target.value))}
-                  className="mt-1 w-full border rounded px-3 py-2"
+                  className="mt-1 w-full border rounded-lg px-3 py-2"
                 />
               </label>
             </div>
@@ -157,14 +234,20 @@ export function VentaScreen() {
             <div className="mt-3 flex items-center justify-between text-sm">
               <div className="text-slate-600">
                 {codigo.trim() === "" ? (
-                  "— ingrese código —"
+                  modoEscaner ? (
+                    "Listo para escanear…"
+                  ) : (
+                    "— ingrese código —"
+                  )
                 ) : encontrado ? (
                   <>
                     <span className="font-semibold">{encontrado.descripcion}</span> ·{" "}
                     {money(encontrado.precio)} · Stock: {encontrado.stockActual}
                   </>
                 ) : (
-                  <span className="text-amber-600">⚠️ Código no está en STOCK (venta manual)</span>
+                  <span className="text-amber-600 flex items-center gap-1">
+                    <AlertTriangle size={14} /> Código no está en STOCK (venta manual)
+                  </span>
                 )}
               </div>
               <div className="text-slate-500">Subtotal: {money(subtotalPrev)}</div>
@@ -172,21 +255,20 @@ export function VentaScreen() {
 
             <button
               onClick={agregar}
-              className="mt-3 w-full bg-emerald-500 hover:bg-emerald-600 text-slate-900 font-semibold rounded py-2"
+              className="btn-accion mt-3 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
             >
-              ➕ Agregar al carrito
+              <Plus size={20} /> Agregar al carrito
             </button>
           </div>
 
           {msg && (
-            <div className="mt-3 text-sm rounded bg-slate-100 border border-slate-200 px-3 py-2">
+            <div className="mt-3 text-sm rounded-lg bg-slate-100 border border-slate-200 px-3 py-2 anim-pop">
               {msg}
             </div>
           )}
         </div>
 
-        {/* Carrito */}
-        <div className="bg-white rounded-xl shadow overflow-hidden">
+        <div className="bg-white rounded-xl shadow overflow-hidden anim-in">
           <table className="w-full text-sm">
             <thead className="bg-slate-100 text-slate-600">
               <tr>
@@ -209,7 +291,7 @@ export function VentaScreen() {
                 </tr>
               )}
               {items.map((l, i) => (
-                <tr key={i} className="border-t">
+                <tr key={i} className="border-t anim-pop">
                   <td className="px-3 py-2">{i + 1}</td>
                   <td className="px-3 py-2 font-mono">{l.codigo}</td>
                   <td className="px-3 py-2">{l.descripcion}</td>
@@ -222,10 +304,11 @@ export function VentaScreen() {
                   <td className="px-2 py-2 text-right">
                     <button
                       onClick={() => quitar(i)}
-                      className="text-red-500 hover:text-red-700"
+                      className="icon-btn inline-flex items-center justify-center text-red-600 hover:text-white hover:bg-red-600 p-1.5 rounded-lg border border-transparent hover:border-red-600"
                       aria-label="Quitar"
                     >
-                      ✕
+                      <X size={18} />
+                      <span className="solo-grande">Quitar</span>
                     </button>
                   </td>
                 </tr>
@@ -235,11 +318,10 @@ export function VentaScreen() {
         </div>
       </div>
 
-      {/* Columna derecha: total + acciones + ticket */}
       <div className="space-y-4">
-        <div className="bg-white rounded-xl shadow p-4">
+        <div className="bg-white rounded-xl shadow p-4 anim-in">
           <div className="flex items-end justify-between">
-            <span className="text-slate-500">💰 Total a pagar</span>
+            <span className="text-slate-500">Total a pagar</span>
             <span className="text-3xl font-bold text-slate-900">{money(total)}</span>
           </div>
           <p className="text-xs text-slate-400 mt-1">Precios incluyen IVA</p>
@@ -248,32 +330,41 @@ export function VentaScreen() {
             <button
               onClick={confirmar}
               disabled={busy}
-              className="col-span-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded py-2.5 disabled:opacity-50"
+              className="btn-accion col-span-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg py-3 flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {busy ? "Registrando…" : "✅ Confirmar venta"}
+              <Check size={20} /> {busy ? "Registrando…" : "Confirmar venta"}
             </button>
             <button
               onClick={() => window.print()}
-              className="bg-orange-500 hover:bg-orange-600 text-white font-semibold rounded py-2"
+              className="btn-accion bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
             >
-              🖨️ Imprimir
+              <Printer size={18} /> Imprimir
             </button>
             <button
               onClick={nuevaVenta}
-              className="bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded py-2"
+              className="btn-accion bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
             >
-              🗑️ Nueva
+              <RotateCcw size={18} /> Nueva
+            </button>
+            <button
+              onClick={() => setVerBoleta((v) => !v)}
+              className="btn-accion col-span-2 border-2 border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
+            >
+              {verBoleta ? <EyeOff size={18} /> : <Eye size={18} />}
+              {verBoleta ? "Ocultar vista previa" : "Ver vista previa de boleta"}
             </button>
           </div>
         </div>
 
-        <Ticket
-          nro={nro}
-          fecha={hoyISO()}
-          cliente={cliente || "Consumidor Final"}
-          items={items}
-          total={total}
-        />
+        <div className={verBoleta ? "anim-in" : "solo-impresion"}>
+          <Ticket
+            nro={nro}
+            fecha={hoyISO()}
+            cliente={cliente || "Consumidor Final"}
+            items={items}
+            total={total}
+          />
+        </div>
       </div>
     </div>
   );

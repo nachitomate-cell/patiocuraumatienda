@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
+import { UiModeProvider } from "@/lib/uimode";
 import { RegisterSW } from "@/components/RegisterSW";
 
 export const metadata: Metadata = {
@@ -20,7 +21,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="es">
       <body className="min-h-screen">
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <UiModeProvider>{children}</UiModeProvider>
+        </AuthProvider>
         <RegisterSW />
       </body>
     </html>

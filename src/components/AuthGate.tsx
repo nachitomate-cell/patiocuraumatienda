@@ -30,9 +30,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!user) {
     return (
-      <div className="mx-auto max-w-sm mt-16 bg-white rounded-xl shadow p-6">
-        <h1 className="text-xl font-bold text-slate-900 mb-1">Ingresar</h1>
-        <p className="text-sm text-slate-500 mb-4">Patio Curauma — punto de venta</p>
+      <div className="mx-auto max-w-sm mt-16 bg-white rounded-xl shadow p-6 anim-in">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="Patio Curauma" className="h-20 w-auto mx-auto mb-3" />
+        <h1 className="text-xl font-bold text-slate-900 mb-1 text-center">Ingresar</h1>
+        <p className="text-sm text-slate-500 mb-4 text-center">
+          Patio Curauma — punto de venta
+        </p>
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -67,7 +71,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           {err && <p className="text-sm text-red-600">{err}</p>}
           <button
             disabled={busy}
-            className="w-full bg-emerald-500 hover:bg-emerald-600 text-slate-900 font-semibold rounded py-2 disabled:opacity-50"
+            className="btn-accion w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg py-2.5 disabled:opacity-50"
           >
             {busy ? "Ingresando…" : "Entrar"}
           </button>

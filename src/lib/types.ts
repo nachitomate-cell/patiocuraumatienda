@@ -5,6 +5,7 @@ export interface Producto {
   stockActual: number;
   costo: number;
   precio: number;
+  barcode?: string; // código de barras EAN/UPC (opcional)
 }
 
 export interface LineaVenta {

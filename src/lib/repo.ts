@@ -3,6 +3,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  setDoc,
   query,
   where,
   orderBy,
@@ -33,6 +34,18 @@ export async function getProducto(codigo: string): Promise<Producto | null> {
   return snap.exists() ? (snap.data() as Producto) : null;
 }
 
+// Búsqueda para venta/escáner: primero por código interno (id del documento)
+// y, si no existe, por el campo código de barras (EAN/UPC).
+export async function buscarParaVenta(valor: string): Promise<Producto | null> {
+  const v = valor.trim();
+  if (!v) return null;
+  const directo = await getProducto(v);
+  if (directo) return directo;
+  const q = query(collection(getDb(), PRODUCTOS), where("barcode", "==", v), limit(1));
+  const snap = await getDocs(q);
+  return snap.empty ? null : (snap.docs[0].data() as Producto);
+}
+
 // Busqueda por prefijo de codigo (usa el id del documento). Limitada para
 // no leer todo el catalogo y mantener bajo el costo de Firestore.
 export async function buscarProductos(term: string, max = 30): Promise<Producto[]> {
@@ -48,6 +61,21 @@ export async function buscarProductos(term: string, max = 30): Promise<Producto[
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data() as Producto);
+}
+
+// Carga todo el catalogo (para el panel de inventario). Tras la primera
+// lectura, Firestore lo sirve desde la cache local (offline y sin costo).
+export async function todosLosProductos(): Promise<Producto[]> {
+  const snap = await getDocs(collection(getDb(), PRODUCTOS));
+  return snap.docs.map((d) => d.data() as Producto);
+}
+
+// Ajuste manual de un producto (stock, precio o costo).
+export async function ajustarProducto(
+  codigo: string,
+  cambios: Partial<Producto>
+): Promise<void> {
+  await setDoc(doc(getDb(), PRODUCTOS, codigo.trim()), cambios, { merge: true });
 }
 
 // Carga inicial del catalogo desde el Excel exportado. Escribe por lotes

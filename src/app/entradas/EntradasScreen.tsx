@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { PackagePlus, Plus, X, Check, AlertTriangle } from "lucide-react";
 import {
   getProducto,
   registrarEntrada,
@@ -87,8 +88,10 @@ export function EntradasScreen() {
   return (
     <div className="grid lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 space-y-4">
-        <div className="bg-white rounded-xl shadow p-4">
-          <h1 className="text-lg font-bold text-slate-900 mb-3">📥 Entrada de productos</h1>
+        <div className="bg-white rounded-xl shadow p-4 anim-in">
+          <h1 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
+            <PackagePlus className="text-cyan-600" size={22} /> Entrada de productos
+          </h1>
 
           <div className="rounded-lg border border-slate-200 p-3 bg-slate-50">
             <div className="grid sm:grid-cols-5 gap-3 items-end">
@@ -140,17 +143,17 @@ export function EntradasScreen() {
                   {encontrado.stockActual} → quedará {encontrado.stockActual + cantidad}
                 </>
               ) : (
-                <span className="text-amber-600">
-                  ⚠️ Código nuevo: se creará el producto al registrar
+                <span className="text-amber-600 flex items-center gap-1">
+                  <AlertTriangle size={14} /> Código nuevo: se creará el producto al registrar
                 </span>
               )}
             </div>
 
             <button
               onClick={agregar}
-              className="mt-3 w-full bg-emerald-500 hover:bg-emerald-600 text-slate-900 font-semibold rounded py-2"
+              className="btn-accion mt-3 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
             >
-              ➕ Agregar a la entrada
+              <Plus size={20} /> Agregar a la entrada
             </button>
           </div>
 
@@ -182,7 +185,7 @@ export function EntradasScreen() {
                 </tr>
               )}
               {items.map((l, i) => (
-                <tr key={i} className="border-t">
+                <tr key={i} className="border-t anim-pop">
                   <td className="px-3 py-2">{i + 1}</td>
                   <td className="px-3 py-2 font-mono">{l.codigo}</td>
                   <td className="px-3 py-2">{l.descripcion}</td>
@@ -191,10 +194,11 @@ export function EntradasScreen() {
                   <td className="px-2 py-2 text-right">
                     <button
                       onClick={() => quitar(i)}
-                      className="text-red-500 hover:text-red-700"
+                      className="icon-btn inline-flex items-center justify-center text-red-600 hover:text-white hover:bg-red-600 p-1.5 rounded-lg border border-transparent hover:border-red-600"
                       aria-label="Quitar"
                     >
-                      ✕
+                      <X size={18} />
+                      <span className="solo-grande">Quitar</span>
                     </button>
                   </td>
                 </tr>
@@ -206,7 +210,7 @@ export function EntradasScreen() {
 
       {/* Columna derecha: registrar + historial */}
       <div className="space-y-4">
-        <div className="bg-white rounded-xl shadow p-4">
+        <div className="bg-white rounded-xl shadow p-4 anim-in">
           <div className="flex items-end justify-between">
             <span className="text-slate-500">Productos a ingresar</span>
             <span className="text-2xl font-bold text-slate-900">
@@ -216,13 +220,13 @@ export function EntradasScreen() {
           <button
             onClick={registrar}
             disabled={busy}
-            className="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded py-2.5 disabled:opacity-50"
+            className="btn-accion mt-3 w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg py-3 flex items-center justify-center gap-2 disabled:opacity-50"
           >
-            {busy ? "Registrando…" : "✅ Registrar entrada"}
+            <Check size={20} /> {busy ? "Registrando…" : "Registrar entrada"}
           </button>
         </div>
 
-        <div className="bg-white rounded-xl shadow p-4">
+        <div className="bg-white rounded-xl shadow p-4 anim-in">
           <h2 className="font-semibold text-slate-800 mb-2">Últimas entradas</h2>
           <ul className="text-sm divide-y">
             {historial.length === 0 && (
