@@ -23,7 +23,7 @@ export function Ticket({ nro, fecha, cliente, items, total }: Props) {
         <div className="font-bold text-sm">🏡 PATIO CURAUMA</div>
         <div>Productos Naturales y Artesanales</div>
         <div>📍 Curauma, Valparaíso</div>
-        <div>www.patiocurauma.cl</div>
+        <div>www.patiocuraumaonline.com</div>
       </div>
       <div className="my-1">════════════════════════</div>
       <div className="flex justify-between">
@@ -58,6 +58,12 @@ export function Ticket({ nro, fecha, cliente, items, total }: Props) {
       <div className="my-1">════════════════════════</div>
       <div className="text-center mt-2">
         <div>📱 Club de Fidelización</div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/qr-club.png"
+          alt="QR Club de Fidelización Patio Curauma"
+          className="mx-auto my-2 w-28 h-28"
+        />
         <div>¡Escanea y acumula puntos!</div>
         <div className="mt-2">¡GRACIAS POR SU COMPRA!</div>
         <div>📷 @patiocurauma</div>
