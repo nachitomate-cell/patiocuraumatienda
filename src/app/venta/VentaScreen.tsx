@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ShoppingBag,
   Search,
@@ -25,6 +25,7 @@ import {
   siguienteNroVenta,
   listarClientes,
   crearCliente,
+  todosLosProductos,
 } from "@/lib/repo";
 import {
   subtotalLinea,
@@ -38,14 +39,24 @@ import { useAuth } from "@/lib/auth";
 import { Ticket } from "@/components/Ticket";
 import { EscanerCamara } from "@/components/EscanerCamara";
 
+// Normaliza texto para buscar sin distinguir mayúsculas ni acentos
+// ("Café" y "cafe" coinciden).
+function norm(s: string): string {
+  return (s || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
 export function VentaScreen() {
   const { user } = useAuth();
   const [nro, setNro] = useState("NV-—");
   const [cliente, setCliente] = useState("");
-  const [codigo, setCodigo] = useState("");
+  const [term, setTerm] = useState("");
+  const [catalogo, setCatalogo] = useState<Producto[]>([]);
+  const [cargandoCat, setCargandoCat] = useState(true);
+  const [seleccionado, setSeleccionado] = useState<Producto | null>(null);
   const [cantidad, setCantidad] = useState(1);
-  const [descuento, setDescuento] = useState(0);
-  const [encontrado, setEncontrado] = useState<Producto | null>(null);
   const [items, setItems] = useState<LineaVenta[]>([]);
   const [msg, setMsg] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -66,6 +77,24 @@ export function VentaScreen() {
       .catch(() => {});
   }, []);
 
+  // Carga el catálogo una vez (Firestore lo sirve luego desde su cache local).
+  // La búsqueda por nombre se hace en memoria: instantánea y sin costo.
+  useEffect(() => {
+    todosLosProductos()
+      .then(setCatalogo)
+      .catch(() => {})
+      .finally(() => setCargandoCat(false));
+  }, []);
+
+  // Coincidencias por nombre o código, ignorando mayúsculas y acentos.
+  const resultados = useMemo(() => {
+    const t = norm(term.trim());
+    if (!t) return [];
+    return catalogo
+      .filter((p) => norm(p.descripcion).includes(t) || norm(p.codigo).includes(t))
+      .slice(0, 12);
+  }, [term, catalogo]);
+
   async function agregarCliente() {
     const n = nuevoCliente.trim();
     if (!n) return;
@@ -79,15 +108,54 @@ export function VentaScreen() {
     setNuevoCliente("");
   }
 
-  async function buscar(cod: string) {
-    setCodigo(cod);
-    setEncontrado(null);
-    const c = cod.trim();
-    if (!c) return;
-    setEncontrado(await buscarParaVenta(c));
+  // Agrega una línea al carrito; si el producto ya está, suma cantidades.
+  function agregarLinea(linea: LineaVenta) {
+    setItems((prev) => {
+      const idx = prev.findIndex(
+        (l) => l.codigo === linea.codigo && l.descuento === linea.descuento
+      );
+      if (idx >= 0) {
+        const copia = [...prev];
+        copia[idx] = { ...copia[idx], cantidad: copia[idx].cantidad + linea.cantidad };
+        return copia;
+      }
+      return [...prev, linea];
+    });
   }
 
-  // Agrega un producto al carrito a partir de un código (manual, lector USB o cámara).
+  // Paso 1: el usuario toca un producto de la lista de resultados.
+  function elegir(p: Producto) {
+    setSeleccionado(p);
+    setCantidad(1);
+    setTerm("");
+    setMsg("");
+  }
+
+  // Paso 2: confirma la cantidad y lo manda al carrito.
+  function agregarSeleccion() {
+    if (!seleccionado) return;
+    if (cantidad <= 0) return setMsg("Cantidad inválida.");
+    if (cantidad > seleccionado.stockActual) {
+      setMsg(
+        `Stock insuficiente: quedan ${seleccionado.stockActual} de ${seleccionado.descripcion}.`
+      );
+      return;
+    }
+    setMsg("");
+    agregarLinea({
+      codigo: seleccionado.codigo,
+      descripcion: seleccionado.descripcion,
+      precio: seleccionado.precio,
+      cantidad,
+      descuento: 0,
+    });
+    setSeleccionado(null);
+    setCantidad(1);
+    setTerm("");
+    if (modoEscaner) inputRef.current?.focus();
+  }
+
+  // Agrega por código exacto (lector USB o cámara), buscándolo en Firestore.
   async function agregarPorCodigo(cod: string, cant = 1, desc = 0) {
     setMsg("");
     const c = cod.trim();
@@ -98,34 +166,16 @@ export function VentaScreen() {
       setMsg(`Stock insuficiente: quedan ${p.stockActual} unid. de ${p.descripcion}.`);
       return;
     }
-    const linea: LineaVenta = {
+    agregarLinea({
       codigo: p?.codigo ?? c,
       descripcion: p?.descripcion ?? "Manual",
       precio: p?.precio ?? 0,
       cantidad: cant,
       descuento: desc,
-    };
-    // Si el mismo producto ya está en el carrito, suma cantidades.
-    setItems((prev) => {
-      const idx = prev.findIndex(
-        (l) => l.codigo === linea.codigo && l.descuento === linea.descuento
-      );
-      if (idx >= 0) {
-        const copia = [...prev];
-        copia[idx] = { ...copia[idx], cantidad: copia[idx].cantidad + cant };
-        return copia;
-      }
-      return [...prev, linea];
     });
-    setCodigo("");
+    setTerm("");
     setCantidad(1);
-    setDescuento(0);
-    setEncontrado(null);
     if (modoEscaner) inputRef.current?.focus();
-  }
-
-  function agregar() {
-    agregarPorCodigo(codigo, cantidad, descuento);
   }
 
   function activarEscaner() {
@@ -177,18 +227,14 @@ export function VentaScreen() {
   function nuevaVenta() {
     setItems([]);
     setCliente("");
-    setCodigo("");
+    setTerm("");
+    setSeleccionado(null);
     setCantidad(1);
-    setDescuento(0);
-    setEncontrado(null);
     setNro("NV-—");
     setMsg("");
     setMedioPago("efectivo");
     setClienteId("");
   }
-
-  const precioActual = encontrado?.precio ?? 0;
-  const subtotalPrev = cantidad * precioActual * (1 - descuento / 100);
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
@@ -248,71 +294,129 @@ export function VentaScreen() {
               modoEscaner ? "border-cyan-400 bg-cyan-50" : "border-slate-200 bg-slate-50"
             }`}
           >
-            <div className="grid sm:grid-cols-4 gap-3 items-end">
-              <label className="text-sm sm:col-span-2">
-                <span className="text-slate-500 flex items-center gap-1">
-                  <Search size={14} /> Código / código de barras
-                </span>
-                <input
-                  ref={inputRef}
-                  value={codigo}
-                  onChange={(e) => buscar(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && agregar()}
-                  placeholder={modoEscaner ? "Escanee el producto…" : "ej: CANE0056"}
-                  className="mt-1 w-full border rounded-lg px-3 py-2 font-mono uppercase"
-                />
-              </label>
-              <label className="text-sm">
-                <span className="text-slate-500">Cantidad</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={cantidad}
-                  onChange={(e) => setCantidad(Number(e.target.value))}
-                  className="mt-1 w-full border rounded-lg px-3 py-2"
-                />
-              </label>
-              <label className="text-sm">
-                <span className="text-slate-500">Descuento %</span>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={descuento}
-                  onChange={(e) => setDescuento(Number(e.target.value))}
-                  className="mt-1 w-full border rounded-lg px-3 py-2"
-                />
-              </label>
-            </div>
-
-            <div className="mt-3 flex items-center justify-between text-sm">
-              <div className="text-slate-600">
-                {codigo.trim() === "" ? (
-                  modoEscaner ? (
-                    "Listo para escanear…"
-                  ) : (
-                    "— ingrese código —"
-                  )
-                ) : encontrado ? (
-                  <>
-                    <span className="font-semibold">{encontrado.descripcion}</span> ·{" "}
-                    {money(encontrado.precio)} · Stock: {encontrado.stockActual}
-                  </>
-                ) : (
-                  <span className="text-amber-600 flex items-center gap-1">
-                    <AlertTriangle size={14} /> Código no está en STOCK (venta manual)
+            {!seleccionado ? (
+              <>
+                {/* Paso 1: buscar por nombre */}
+                <label className="block">
+                  <span className="text-slate-600 font-semibold flex items-center gap-1.5">
+                    <Search size={18} /> Escriba el nombre del producto
                   </span>
-                )}
-              </div>
-              <div className="text-slate-500">Subtotal: {money(subtotalPrev)}</div>
-            </div>
+                  <input
+                    ref={inputRef}
+                    value={term}
+                    onChange={(e) => setTerm(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && modoEscaner) agregarPorCodigo(term);
+                    }}
+                    placeholder={modoEscaner ? "Escanee el producto…" : "Ej: coca, pan, arroz…"}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="mt-1 w-full border-2 rounded-xl px-4 py-3 text-lg"
+                  />
+                </label>
 
-            <button
-              onClick={agregar}
-              className="btn-accion mt-3 w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
-            >
-              <Plus size={20} /> Agregar al carrito
-            </button>
+                {term.trim() !== "" && !modoEscaner && (
+                  <div className="mt-3 space-y-2 max-h-80 overflow-auto">
+                    {cargandoCat ? (
+                      <div className="text-center text-slate-400 py-4">Cargando productos…</div>
+                    ) : resultados.length === 0 ? (
+                      <div className="text-center text-slate-500 py-6 flex flex-col items-center gap-1">
+                        <AlertTriangle size={20} className="text-amber-500" />
+                        No se encontró “{term.trim()}”. Revise el nombre.
+                      </div>
+                    ) : (
+                      resultados.map((p) => (
+                        <button
+                          key={p.codigo}
+                          onClick={() => elegir(p)}
+                          className="w-full flex items-center justify-between gap-3 text-left rounded-xl border-2 border-slate-200 bg-white hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 px-4 py-3"
+                        >
+                          <span className="font-semibold text-slate-800 text-base leading-tight">
+                            {p.descripcion}
+                          </span>
+                          <span className="text-right shrink-0">
+                            <span className="block font-bold text-slate-900">
+                              {money(p.precio)}
+                            </span>
+                            <span
+                              className={`text-xs ${
+                                p.stockActual <= 0 ? "text-red-500" : "text-slate-500"
+                              }`}
+                            >
+                              Stock: {p.stockActual}
+                            </span>
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="space-y-4 anim-pop">
+                {/* Paso 2: elegir cantidad y agregar */}
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-lg font-bold text-slate-900 leading-tight">
+                      {seleccionado.descripcion}
+                    </div>
+                    <div className="text-slate-600">
+                      {money(seleccionado.precio)} · Stock: {seleccionado.stockActual}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSeleccionado(null)}
+                    className="text-slate-500 hover:text-white hover:bg-slate-500 p-2 rounded-lg border border-slate-300"
+                    aria-label="Elegir otro producto"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <div>
+                  <div className="text-sm text-slate-500 mb-1">Cantidad</div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setCantidad((c) => Math.max(1, c - 1))}
+                      className="w-14 h-14 rounded-xl bg-slate-200 hover:bg-slate-300 text-3xl font-bold text-slate-700 flex items-center justify-center"
+                      aria-label="Quitar uno"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={cantidad}
+                      onChange={(e) => setCantidad(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-20 h-14 border-2 rounded-xl text-center text-2xl font-bold"
+                    />
+                    <button
+                      onClick={() => setCantidad((c) => c + 1)}
+                      className="w-14 h-14 rounded-xl bg-slate-200 hover:bg-slate-300 text-3xl font-bold text-slate-700 flex items-center justify-center"
+                      aria-label="Agregar uno"
+                    >
+                      +
+                    </button>
+                    <div className="ml-auto text-right">
+                      <div className="text-xs text-slate-500">Subtotal</div>
+                      <div className="text-xl font-bold text-slate-900">
+                        {money(cantidad * seleccionado.precio)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={agregarSeleccion}
+                  className="btn-accion w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl py-4 text-lg flex items-center justify-center gap-2"
+                >
+                  <Plus size={24} /> Agregar al carrito
+                </button>
+              </div>
+            )}
           </div>
 
           {msg && (

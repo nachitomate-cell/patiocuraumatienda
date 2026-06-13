@@ -40,6 +40,11 @@ export function getDb(): Firestore {
           localCache: persistentLocalCache({
             tabManager: persistentMultipleTabManager(),
           }),
+          // En redes restrictivas (datos móviles, proxies) o con un Service
+          // Worker activo, el streaming WebChannel puede fallar y Firestore
+          // reporta "client is offline". El long-polling auto-detectado evita
+          // ese falso offline cayendo a peticiones HTTP normales.
+          experimentalAutoDetectLongPolling: true,
         })
       : initializeFirestore(a, {});
   return _db;
