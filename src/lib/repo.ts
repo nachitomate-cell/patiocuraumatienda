@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  addDoc,
   getDoc,
   getDocs,
   setDoc,
@@ -16,9 +17,11 @@ import {
 import { getDb } from "./firebase";
 import {
   subtotalLinea,
+  type Cliente,
   type Entrada,
   type LineaEntrada,
   type LineaVenta,
+  type MovimientoFiado,
   type Producto,
   type Venta,
 } from "./types";
@@ -26,7 +29,12 @@ import {
 const PRODUCTOS = "productos";
 const VENTAS = "ventas";
 const ENTRADAS = "entradas";
+const CLIENTES = "clientes";
 const CONTADORES = "contadores";
+
+function hoy(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export async function getProducto(codigo: string): Promise<Producto | null> {
   const ref = doc(getDb(), PRODUCTOS, codigo.trim());
@@ -132,7 +140,74 @@ export async function confirmarVenta(
       stockActual: increment(-l.cantidad),
     });
   }
+
+  // Si la venta es a fiado, carga la deuda al cliente en el mismo lote.
+  if (venta.medioPago === "fiado" && venta.clienteId) {
+    batch.set(doc(collection(db, CLIENTES, venta.clienteId, "movimientos")), {
+      tipo: "cargo",
+      monto: total,
+      fecha: venta.fecha,
+      ventaNro: venta.nro,
+      nota: "Venta a fiado",
+      creadoEn: Date.now(),
+    });
+    batch.update(doc(db, CLIENTES, venta.clienteId), {
+      saldo: increment(total),
+    });
+  }
+
   await batch.commit();
+}
+
+// ===== Cuaderno de fiados =====
+
+export async function listarClientes(): Promise<Cliente[]> {
+  const snap = await getDocs(collection(getDb(), CLIENTES));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as Omit<Cliente, "id">) }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+export async function crearCliente(nombre: string, telefono = ""): Promise<string> {
+  const ref = await addDoc(collection(getDb(), CLIENTES), {
+    nombre: nombre.trim(),
+    telefono: telefono.trim(),
+    saldo: 0,
+    creadoEn: Date.now(),
+  });
+  return ref.id;
+}
+
+// Registra un abono (pago) del cliente: baja su deuda.
+export async function registrarAbono(
+  clienteId: string,
+  monto: number,
+  nota = ""
+): Promise<void> {
+  const db = getDb();
+  const batch = writeBatch(db);
+  batch.set(doc(collection(db, CLIENTES, clienteId, "movimientos")), {
+    tipo: "abono",
+    monto,
+    fecha: hoy(),
+    nota,
+    creadoEn: Date.now(),
+  });
+  batch.update(doc(db, CLIENTES, clienteId), { saldo: increment(-monto) });
+  await batch.commit();
+}
+
+export async function movimientosCliente(
+  clienteId: string,
+  max = 50
+): Promise<MovimientoFiado[]> {
+  const q = query(
+    collection(getDb(), CLIENTES, clienteId, "movimientos"),
+    orderBy("creadoEn", "desc"),
+    limit(max)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as MovimientoFiado);
 }
 
 export async function ultimasVentas(max = 20): Promise<Venta[]> {

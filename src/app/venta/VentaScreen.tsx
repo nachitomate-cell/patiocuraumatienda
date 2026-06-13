@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ShoppingBag,
   Search,
@@ -14,9 +14,25 @@ import {
   AlertTriangle,
   ScanLine,
   Camera,
+  Banknote,
+  CreditCard,
+  Notebook,
+  UserPlus,
 } from "lucide-react";
-import { buscarParaVenta, confirmarVenta, siguienteNroVenta } from "@/lib/repo";
-import { subtotalLinea, type LineaVenta, type Producto } from "@/lib/types";
+import {
+  buscarParaVenta,
+  confirmarVenta,
+  siguienteNroVenta,
+  listarClientes,
+  crearCliente,
+} from "@/lib/repo";
+import {
+  subtotalLinea,
+  type LineaVenta,
+  type Producto,
+  type Cliente,
+  type MedioPago,
+} from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { Ticket } from "@/components/Ticket";
@@ -36,9 +52,32 @@ export function VentaScreen() {
   const [verBoleta, setVerBoleta] = useState(false);
   const [modoEscaner, setModoEscaner] = useState(false);
   const [mostrarCamara, setMostrarCamara] = useState(false);
+  const [medioPago, setMedioPago] = useState<MedioPago>("efectivo");
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [clienteId, setClienteId] = useState("");
+  const [nuevoCliente, setNuevoCliente] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   const total = items.reduce((s, l) => s + subtotalLinea(l), 0);
+
+  useEffect(() => {
+    listarClientes()
+      .then(setClientes)
+      .catch(() => {});
+  }, []);
+
+  async function agregarCliente() {
+    const n = nuevoCliente.trim();
+    if (!n) return;
+    const id = await crearCliente(n);
+    setClientes((prev) =>
+      [...prev, { id, nombre: n, saldo: 0, creadoEn: Date.now() }].sort((a, b) =>
+        a.nombre.localeCompare(b.nombre)
+      )
+    );
+    setClienteId(id);
+    setNuevoCliente("");
+  }
 
   async function buscar(cod: string) {
     setCodigo(cod);
@@ -101,20 +140,33 @@ export function VentaScreen() {
 
   async function confirmar() {
     if (items.length === 0) return setMsg("No hay productos en el carrito.");
+    if (medioPago === "fiado" && !clienteId)
+      return setMsg("Seleccione o cree un cliente para fiar.");
     setBusy(true);
     setMsg("");
     try {
       const nuevoNro = await siguienteNroVenta();
-      await confirmarVenta({
+      const cli = clientes.find((c) => c.id === clienteId);
+      const base = {
         nro: nuevoNro,
         fecha: hoyISO(),
         cliente: cliente || "Consumidor Final",
         items,
         total,
         vendedor: user?.email ?? "",
-      });
+        medioPago,
+      };
+      await confirmarVenta(
+        medioPago === "fiado"
+          ? { ...base, clienteId, clienteNombre: cli?.nombre ?? "" }
+          : base
+      );
       setNro(nuevoNro);
-      setMsg(`Venta ${nuevoNro} registrada y stock descontado.`);
+      setMsg(
+        medioPago === "fiado"
+          ? `Venta ${nuevoNro} fiada a ${cli?.nombre ?? "cliente"}.`
+          : `Venta ${nuevoNro} registrada (${medioPago}).`
+      );
     } catch {
       setMsg("Error al registrar la venta. Revise su conexión o reglas de Firestore.");
     } finally {
@@ -131,6 +183,8 @@ export function VentaScreen() {
     setEncontrado(null);
     setNro("NV-—");
     setMsg("");
+    setMedioPago("efectivo");
+    setClienteId("");
   }
 
   const precioActual = encontrado?.precio ?? 0;
@@ -327,6 +381,67 @@ export function VentaScreen() {
             <span className="text-5xl font-bold precio-oro">{money(total)}</span>
           </div>
           <p className="text-xs text-slate-400 mt-1">Precios incluyen IVA</p>
+
+          {/* Medio de pago */}
+          <div className="mt-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+              Medio de pago
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  { id: "efectivo", label: "Efectivo", Icon: Banknote },
+                  { id: "transferencia", label: "Transfer.", Icon: CreditCard },
+                  { id: "fiado", label: "Fiado", Icon: Notebook },
+                ] as const
+              ).map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setMedioPago(id)}
+                  className={`flex flex-col items-center gap-1 rounded-lg py-2 text-sm font-semibold border ${
+                    medioPago === id
+                      ? "bg-cyan-600 text-white border-cyan-600"
+                      : "border-slate-300 text-slate-700 hover:bg-white/5"
+                  }`}
+                >
+                  <Icon size={20} /> {label}
+                </button>
+              ))}
+            </div>
+
+            {medioPago === "fiado" && (
+              <div className="mt-3 space-y-2 anim-pop">
+                <select
+                  value={clienteId}
+                  onChange={(e) => setClienteId(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2"
+                >
+                  <option value="">— Elegir cliente —</option>
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.nombre}
+                      {c.saldo > 0 ? ` (debe ${money(c.saldo)})` : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-2">
+                  <input
+                    value={nuevoCliente}
+                    onChange={(e) => setNuevoCliente(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && agregarCliente()}
+                    placeholder="Nuevo cliente…"
+                    className="flex-1 border rounded-lg px-3 py-2"
+                  />
+                  <button
+                    onClick={agregarCliente}
+                    className="bg-emerald-600 text-white rounded-lg px-3 flex items-center gap-1 font-semibold"
+                  >
+                    <UserPlus size={18} /> Crear
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button

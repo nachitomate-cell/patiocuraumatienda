@@ -8,6 +8,7 @@ import {
   PackagePlus,
   Boxes,
   History,
+  Notebook,
   Settings,
   LogOut,
   ZoomIn,
@@ -20,6 +21,7 @@ const NAV = [
   { href: "/venta", label: "Venta", Icon: ShoppingCart },
   { href: "/entradas", label: "Entradas", Icon: PackagePlus },
   { href: "/stock", label: "Stock", Icon: Boxes },
+  { href: "/fiados", label: "Fiados", Icon: Notebook },
   { href: "/historial", label: "Historial", Icon: History },
   { href: "/admin", label: "Admin", Icon: Settings },
 ];
@@ -42,7 +44,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               className="h-11 w-auto drop-shadow-[0_2px_8px_rgba(232,163,61,0.35)]"
               priority
             />
-            <span className="hidden sm:flex flex-col leading-none">
+            <span className="hidden lg:flex flex-col leading-none">
               <span className="font-bold tracking-tight text-base">Patio Curauma</span>
               <span className="text-[10px] uppercase tracking-[0.25em] text-amber-300/80">
                 Premium POS
@@ -62,7 +64,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     }`}
                   >
                     <Icon size={18} strokeWidth={2.2} />
-                    <span className="hidden sm:inline">{label}</span>
+                    <span className="hidden xl:inline">{label}</span>
                   </Link>
                 );
               })}

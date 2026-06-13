@@ -16,6 +16,8 @@ export interface LineaVenta {
   descuento: number; // porcentaje 0-100
 }
 
+export type MedioPago = "efectivo" | "transferencia" | "fiado";
+
 export interface Venta {
   nro: string;
   fecha: string; // ISO yyyy-mm-dd
@@ -24,6 +26,27 @@ export interface Venta {
   total: number;
   creadoEn: number; // epoch ms
   vendedor?: string;
+  medioPago?: MedioPago;
+  clienteId?: string; // referencia al cliente del fiado
+  clienteNombre?: string;
+}
+
+// Cliente del cuaderno de fiados.
+export interface Cliente {
+  id: string;
+  nombre: string;
+  telefono?: string;
+  saldo: number; // deuda actual (positivo = debe)
+  creadoEn: number;
+}
+
+export interface MovimientoFiado {
+  tipo: "cargo" | "abono";
+  monto: number;
+  fecha: string;
+  nota?: string;
+  ventaNro?: string;
+  creadoEn: number;
 }
 
 export interface LineaEntrada {
