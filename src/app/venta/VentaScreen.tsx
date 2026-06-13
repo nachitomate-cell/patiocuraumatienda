@@ -410,11 +410,14 @@ export function VentaScreen() {
             </div>
 
             {medioPago === "fiado" && (
-              <div className="mt-3 space-y-2 anim-pop">
+              <div className="mt-3 rounded-xl border border-white/15 bg-white/5 p-3 space-y-2 anim-pop">
+                <div className="text-[11px] uppercase tracking-wide text-amber-300/80 font-semibold">
+                  Cliente del fiado
+                </div>
                 <select
                   value={clienteId}
                   onChange={(e) => setClienteId(e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2"
+                  className="w-full border rounded-lg px-3 py-2.5"
                 >
                   <option value="">— Elegir cliente —</option>
                   {clientes.map((c) => (
@@ -424,17 +427,22 @@ export function VentaScreen() {
                     </option>
                   ))}
                 </select>
+                <div className="flex items-center gap-2">
+                  <span className="h-px flex-1 bg-white/10" />
+                  <span className="text-[11px] text-slate-400">o crea uno nuevo</span>
+                  <span className="h-px flex-1 bg-white/10" />
+                </div>
                 <div className="flex gap-2">
                   <input
                     value={nuevoCliente}
                     onChange={(e) => setNuevoCliente(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && agregarCliente()}
-                    placeholder="Nuevo cliente…"
-                    className="flex-1 border rounded-lg px-3 py-2"
+                    placeholder="Nombre del cliente…"
+                    className="flex-1 border rounded-lg px-3 py-2.5"
                   />
                   <button
                     onClick={agregarCliente}
-                    className="bg-emerald-600 text-white rounded-lg px-3 flex items-center gap-1 font-semibold"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-4 flex items-center gap-1.5 font-semibold shrink-0"
                   >
                     <UserPlus size={18} /> Crear
                   </button>

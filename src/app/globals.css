@@ -131,6 +131,19 @@ textarea:focus {
 .panel-obsidiana .border-slate-300 {
   border-color: rgba(255, 255, 255, 0.2);
 }
+/* Campos dentro del panel oscuro (fiado) */
+.panel-obsidiana select,
+.panel-obsidiana input {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e9edf5;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.panel-obsidiana input::placeholder {
+  color: rgba(233, 237, 245, 0.45);
+}
+.panel-obsidiana select option {
+  color: #0f172a;
+}
 
 /* Brillo glossy en botones de acento */
 button.bg-cyan-600,

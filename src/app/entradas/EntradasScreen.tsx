@@ -11,6 +11,7 @@ import {
 import type { Entrada, LineaEntrada, Producto } from "@/lib/types";
 import { hoyISO } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
+import { SelectorFecha } from "@/components/SelectorFecha";
 
 export function EntradasScreen() {
   const { user } = useAuth();
@@ -123,15 +124,10 @@ export function EntradasScreen() {
                   className="mt-1 w-full border rounded px-3 py-2"
                 />
               </label>
-              <label className="text-sm">
+              <div className="text-sm">
                 <span className="text-slate-500">Fecha</span>
-                <input
-                  type="date"
-                  value={fecha}
-                  onChange={(e) => setFecha(e.target.value)}
-                  className="mt-1 w-full border rounded px-3 py-2"
-                />
-              </label>
+                <SelectorFecha value={fecha} onChange={setFecha} className="mt-1" />
+              </div>
             </div>
 
             <div className="mt-3 text-sm text-slate-600">

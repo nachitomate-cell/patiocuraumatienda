@@ -13,6 +13,7 @@ import * as XLSX from "xlsx";
 import { ultimasVentas } from "@/lib/repo";
 import { subtotalLinea, type Venta } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
+import { SelectorFecha } from "@/components/SelectorFecha";
 
 export function HistorialScreen() {
   const [ventas, setVentas] = useState<Venta[]>([]);
@@ -117,24 +118,14 @@ export function HistorialScreen() {
               className="w-full border rounded-lg pl-9 pr-3 py-2"
             />
           </div>
-          <label className="text-sm">
+          <div className="text-sm">
             <span className="text-slate-500">Desde</span>
-            <input
-              type="date"
-              value={desde}
-              onChange={(e) => setDesde(e.target.value)}
-              className="mt-1 w-full border rounded-lg px-3 py-2"
-            />
-          </label>
-          <label className="text-sm">
+            <SelectorFecha value={desde} onChange={setDesde} className="mt-1" />
+          </div>
+          <div className="text-sm">
             <span className="text-slate-500">Hasta</span>
-            <input
-              type="date"
-              value={hasta}
-              onChange={(e) => setHasta(e.target.value)}
-              className="mt-1 w-full border rounded-lg px-3 py-2"
-            />
-          </label>
+            <SelectorFecha value={hasta} onChange={setHasta} className="mt-1" />
+          </div>
         </div>
 
         <div className="mt-3 flex flex-wrap gap-4 text-sm">
