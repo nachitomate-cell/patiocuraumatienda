@@ -361,13 +361,15 @@ thead th {
   }
 }
 
-/* Solo el ticket se imprime; el resto de la interfaz se oculta. */
+/* Solo el ticket o las etiquetas se imprimen; el resto se oculta. */
 @media print {
   body * {
     visibility: hidden;
   }
   #ticket,
-  #ticket * {
+  #ticket *,
+  #etiquetas-print,
+  #etiquetas-print * {
     visibility: visible;
   }
   #ticket {
@@ -376,7 +378,16 @@ thead th {
     top: 0;
     width: 80mm;
   }
+  #etiquetas-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
   .no-print {
     display: none !important;
+  }
+  .etiqueta {
+    break-inside: avoid;
   }
 }
