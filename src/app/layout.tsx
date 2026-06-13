@@ -12,6 +12,7 @@ const sora = Sora({
 });
 import { UiModeProvider } from "@/lib/uimode";
 import { RegisterSW } from "@/components/RegisterSW";
+import { ConexionBanner } from "@/components/ConexionBanner";
 
 export const metadata: Metadata = {
   title: "Patio Curauma POS",
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <AuthProvider>
           <UiModeProvider>{children}</UiModeProvider>
         </AuthProvider>
+        <ConexionBanner />
         <RegisterSW />
       </body>
     </html>
