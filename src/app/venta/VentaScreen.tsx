@@ -319,10 +319,12 @@ export function VentaScreen() {
       </div>
 
       <div className="space-y-4">
-        <div className="bg-white rounded-xl shadow p-4 anim-in">
+        <div className="panel-obsidiana p-5 anim-in">
           <div className="flex items-end justify-between">
-            <span className="text-slate-500">Total a pagar</span>
-            <span className="text-3xl font-bold text-slate-900">{money(total)}</span>
+            <span className="text-slate-500 uppercase tracking-wide text-xs font-semibold">
+              Total a pagar
+            </span>
+            <span className="text-5xl font-bold precio-oro">{money(total)}</span>
           </div>
           <p className="text-xs text-slate-400 mt-1">Precios incluyen IVA</p>
 
@@ -330,7 +332,7 @@ export function VentaScreen() {
             <button
               onClick={confirmar}
               disabled={busy}
-              className="btn-accion col-span-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg py-3 flex items-center justify-center gap-2 disabled:opacity-50"
+              className="btn-accion btn-brillo col-span-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg py-3 flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <Check size={20} /> {busy ? "Registrando…" : "Confirmar venta"}
             </button>

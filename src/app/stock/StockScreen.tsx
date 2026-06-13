@@ -364,19 +364,21 @@ function Kpi({
   color: "slate" | "cyan" | "emerald" | "amber" | "red";
 }) {
   const colores: Record<string, string> = {
-    slate: "text-slate-600 bg-slate-100",
-    cyan: "text-cyan-700 bg-cyan-100",
-    emerald: "text-emerald-700 bg-emerald-100",
-    amber: "text-amber-700 bg-amber-100",
-    red: "text-red-700 bg-red-100",
+    slate: "text-white bg-gradient-to-br from-slate-500 to-slate-700",
+    cyan: "text-white bg-gradient-to-br from-cyan-400 to-cyan-600",
+    emerald: "text-white bg-gradient-to-br from-emerald-400 to-emerald-600",
+    amber: "text-white bg-gradient-to-br from-amber-400 to-amber-600",
+    red: "text-white bg-gradient-to-br from-red-400 to-red-600",
   };
   return (
-    <div className="bg-white rounded-xl shadow p-3">
-      <div className={`inline-flex items-center justify-center w-9 h-9 rounded-lg mb-2 ${colores[color]}`}>
+    <div className="bg-white rounded-xl shadow p-4">
+      <div
+        className={`inline-flex items-center justify-center w-11 h-11 rounded-xl mb-3 shadow-md ${colores[color]}`}
+      >
         {icon}
       </div>
-      <div className="text-xl font-bold text-slate-900 leading-tight">{valor}</div>
-      <div className="text-xs text-slate-500">{label}</div>
+      <div className="text-2xl font-bold text-slate-900 leading-tight">{valor}</div>
+      <div className="text-xs text-slate-500 mt-0.5">{label}</div>
     </div>
   );
 }

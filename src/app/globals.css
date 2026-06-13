@@ -10,9 +10,195 @@
 
 html,
 body {
-  background: #f1f5f9;
+  min-height: 100%;
+  background: radial-gradient(1200px 700px at 50% -15%, #ffffff 0%, #eef1f6 55%, #e4e8f0 100%);
+  background-attachment: fixed;
   color: #0f172a;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ===== TEMA PREMIUM (alta gama) =====
+   Reglas sin capa: ganan a las utilidades de Tailwind. */
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-sora), var(--font-inter), sans-serif;
+  letter-spacing: -0.015em;
+}
+
+/* Cabecera carbono con filo dorado */
+header.no-print {
+  background:
+    linear-gradient(180deg, #11151d 0%, #0a0d13 100%);
+  border-bottom: 1px solid rgba(232, 163, 61, 0.55);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.28);
+}
+
+/* Tarjetas tipo cristal pulido */
+.bg-white {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+.rounded-xl {
+  border-radius: 1rem;
+}
+.shadow {
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04),
+    0 12px 32px -10px rgba(16, 24, 40, 0.18);
+}
+.shadow-md {
+  box-shadow: 0 10px 30px -8px rgba(16, 24, 40, 0.25);
+}
+
+/* Botones premium: degradado + brillo (acentos de marca) */
+.bg-cyan-600 {
+  background-image: linear-gradient(135deg, #25c2d8 0%, #0e8fa3 100%);
+  box-shadow: 0 8px 20px -6px rgba(14, 143, 163, 0.55);
+}
+.bg-emerald-600 {
+  background-image: linear-gradient(135deg, #34d27f 0%, #0f9d58 100%);
+  box-shadow: 0 8px 20px -6px rgba(16, 157, 88, 0.5);
+}
+.bg-amber-600 {
+  background-image: linear-gradient(135deg, #f3bd63 0%, #d4892a 100%);
+  box-shadow: 0 8px 20px -6px rgba(212, 137, 42, 0.5);
+}
+
+/* Campos refinados con foco dorado-turquesa */
+input,
+select,
+textarea {
+  background: rgba(255, 255, 255, 0.85);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #1aa3b8;
+  box-shadow: 0 0 0 3px rgba(26, 163, 184, 0.18);
+}
+
+/* Cifra de total con acabado dorado metálico */
+.precio-oro {
+  background: linear-gradient(135deg, #f3c87a 0%, #d4892a 60%, #b9701d 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Detalles finos */
+::selection {
+  background: rgba(232, 163, 61, 0.28);
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(15, 23, 42, 0.22);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(15, 23, 42, 0.35);
+}
+
+/* ===== TEMA PREMIUM 2: panel de cobro obsidiana + brillos ===== */
+
+/* Panel de cobro estilo tablero de auto de lujo */
+.panel-obsidiana {
+  background:
+    radial-gradient(120% 100% at 0% 0%, rgba(232, 163, 61, 0.10), transparent 45%),
+    linear-gradient(160deg, #161b24 0%, #0a0d13 100%);
+  border: 1px solid rgba(232, 163, 61, 0.28);
+  border-radius: 1rem;
+  box-shadow: 0 22px 60px -16px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: #e9edf5;
+}
+.panel-obsidiana .text-slate-500 {
+  color: rgba(233, 237, 245, 0.6);
+}
+.panel-obsidiana .text-slate-400 {
+  color: rgba(233, 237, 245, 0.45);
+}
+.panel-obsidiana .text-slate-700 {
+  color: rgba(233, 237, 245, 0.85);
+}
+.panel-obsidiana .border-slate-300 {
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Brillo glossy en botones de acento */
+button.bg-cyan-600,
+button.bg-emerald-600,
+button.bg-amber-600 {
+  position: relative;
+  overflow: hidden;
+}
+button.bg-cyan-600::before,
+button.bg-emerald-600::before,
+button.bg-amber-600::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 48%);
+  pointer-events: none;
+}
+button.bg-cyan-600:hover,
+button.bg-emerald-600:hover,
+button.bg-amber-600:hover {
+  filter: brightness(1.06);
+}
+
+/* Realce de la pestaña activa de navegación */
+.bg-cyan-500 {
+  box-shadow: 0 6px 18px -6px rgba(34, 193, 216, 0.6);
+}
+
+/* Encabezados de tabla premium */
+thead th {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/* Destello animado que recorre el botón principal */
+@media (prefers-reduced-motion: no-preference) {
+  .btn-brillo {
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-brillo::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -60%;
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(
+      105deg,
+      transparent,
+      rgba(255, 255, 255, 0.5),
+      transparent
+    );
+    transform: skewX(-18deg);
+    animation: barrido 3.4s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes barrido {
+    0%,
+    55% {
+      left: -60%;
+    }
+    100% {
+      left: 130%;
+    }
+  }
 }
 
 /* ===== Animaciones de interacción =====

@@ -39,10 +39,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               alt="Patio Curauma"
               width={40}
               height={52}
-              className="h-11 w-auto drop-shadow"
+              className="h-11 w-auto drop-shadow-[0_2px_8px_rgba(232,163,61,0.35)]"
               priority
             />
-            <span className="font-bold tracking-tight hidden sm:block">Patio Curauma</span>
+            <span className="hidden sm:flex flex-col leading-none">
+              <span className="font-bold tracking-tight text-base">Patio Curauma</span>
+              <span className="text-[10px] uppercase tracking-[0.25em] text-amber-300/80">
+                Premium POS
+              </span>
+            </span>
             <nav className="flex gap-1 ml-2">
               {NAV.map(({ href, label, Icon }) => {
                 const active = path === href || path.startsWith(href + "/");

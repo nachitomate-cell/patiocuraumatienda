@@ -210,10 +210,12 @@ export function EntradasScreen() {
 
       {/* Columna derecha: registrar + historial */}
       <div className="space-y-4">
-        <div className="bg-white rounded-xl shadow p-4 anim-in">
+        <div className="panel-obsidiana p-5 anim-in">
           <div className="flex items-end justify-between">
-            <span className="text-slate-500">Productos a ingresar</span>
-            <span className="text-2xl font-bold text-slate-900">
+            <span className="text-slate-500 uppercase tracking-wide text-xs font-semibold">
+              Productos a ingresar
+            </span>
+            <span className="text-4xl font-bold precio-oro">
               {items.reduce((s, l) => s + l.cantidad, 0)}
             </span>
           </div>
