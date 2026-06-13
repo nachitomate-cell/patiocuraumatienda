@@ -36,8 +36,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="no-print bg-slate-900 text-white shadow-md">
-        <div className="mx-auto max-w-6xl px-4 h-16 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="mx-auto w-full max-w-[1600px] px-4 h-16 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
             <Image
               src="/logo.png"
               alt="Patio Curauma"
@@ -52,14 +52,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 Premium POS
               </span>
             </span>
-            <nav className="flex gap-1 ml-2">
+            <nav className="flex gap-0.5 ml-1 min-w-0">
               {NAV.map(({ href, label, Icon }) => {
                 const active = path === href || path.startsWith(href + "/");
                 return (
                   <Link
                     key={href}
                     href={href}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm transition-colors ${
+                    className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm transition-colors shrink-0 ${
                       active
                         ? "bg-cyan-500 text-slate-900 font-semibold"
                         : "hover:bg-slate-700 text-slate-200"
@@ -73,10 +73,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
           </div>
 
-          <div className="text-xs flex items-center gap-2">
+          <div className="text-xs flex items-center gap-2 shrink-0">
             {configured && user && !user.isAnonymous && (
               <>
-                <span className="text-slate-300 hidden md:inline">{user.email}</span>
+                <span className="text-slate-300 hidden 2xl:inline-block max-w-[150px] truncate align-middle">
+                  {user.email}
+                </span>
                 <button
                   onClick={() => logout()}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-slate-700"
