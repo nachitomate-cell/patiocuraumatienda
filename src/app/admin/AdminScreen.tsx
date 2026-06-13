@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Settings, Upload, Download, FileSpreadsheet } from "lucide-react";
+import Link from "next/link";
+import { Settings, Upload, Download, FileSpreadsheet, Store, ChevronRight } from "lucide-react";
 import * as XLSX from "xlsx";
 import { importarCatalogo, ultimasVentas } from "@/lib/repo";
 import seed from "@/data/productos.seed.json";
@@ -73,6 +74,24 @@ export function AdminScreen() {
           Carga inicial del catálogo y respaldos a archivo.
         </p>
       </div>
+
+      <Link
+        href="/emprendedores"
+        className="bg-white rounded-xl shadow p-4 anim-in flex items-center justify-between hover:bg-slate-50"
+      >
+        <span className="flex items-center gap-3">
+          <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-cyan-100 text-cyan-700">
+            <Store size={22} />
+          </span>
+          <span>
+            <span className="block font-semibold text-slate-800">Emprendedores</span>
+            <span className="block text-sm text-slate-500">
+              Crear emprendedores y generar sus links de carga de productos
+            </span>
+          </span>
+        </span>
+        <ChevronRight className="text-slate-400" />
+      </Link>
 
       <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
         <h2 className="font-semibold text-slate-800">1. Importar catálogo a Firestore</h2>

@@ -18,6 +18,7 @@ import { getDb } from "./firebase";
 import {
   subtotalLinea,
   type Cliente,
+  type Emprendedor,
   type Entrada,
   type LineaEntrada,
   type LineaVenta,
@@ -30,6 +31,7 @@ const PRODUCTOS = "productos";
 const VENTAS = "ventas";
 const ENTRADAS = "entradas";
 const CLIENTES = "clientes";
+const EMPRENDEDORES = "emprendedores";
 const CONTADORES = "contadores";
 
 function hoy(): string {
@@ -208,6 +210,99 @@ export async function movimientosCliente(
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data() as MovimientoFiado);
+}
+
+// ===== Emprendedores (consignación) =====
+
+function generarPrefijo(nombre: string, usados: string[]): string {
+  const letras = nombre.toUpperCase().replace(/[^A-Z]/g, "");
+  const base = letras.slice(0, 3) || "EMP";
+  if (!usados.includes(base)) return base;
+  for (let i = 2; i < 100; i++) {
+    const c = base.slice(0, 2) + i;
+    if (!usados.includes(c)) return c;
+  }
+  return base + Date.now().toString().slice(-3);
+}
+
+function nuevoToken(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  }
+  return Math.random().toString(36).slice(2, 14);
+}
+
+export async function listarEmprendedores(): Promise<Emprendedor[]> {
+  const snap = await getDocs(collection(getDb(), EMPRENDEDORES));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as Omit<Emprendedor, "id">) }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+export async function crearEmprendedor(
+  nombre: string,
+  contacto = "",
+  telefono = ""
+): Promise<Emprendedor> {
+  const existentes = await listarEmprendedores();
+  const prefijo = generarPrefijo(nombre, existentes.map((e) => e.prefijo));
+  const datos = {
+    nombre: nombre.trim(),
+    contacto: contacto.trim(),
+    telefono: telefono.trim(),
+    token: nuevoToken(),
+    prefijo,
+    productosCount: 0,
+    creadoEn: Date.now(),
+  };
+  const ref = await addDoc(collection(getDb(), EMPRENDEDORES), datos);
+  return { id: ref.id, ...datos };
+}
+
+export async function getEmprendedorPorToken(
+  token: string
+): Promise<Emprendedor | null> {
+  const q = query(
+    collection(getDb(), EMPRENDEDORES),
+    where("token", "==", token),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...(d.data() as Omit<Emprendedor, "id">) };
+}
+
+// El emprendedor agrega un producto: se crea en el stock real con código único.
+export async function agregarProductoEmprendedor(
+  emp: Emprendedor,
+  datos: { descripcion: string; precio: number; costo?: number; stock?: number }
+): Promise<string> {
+  const db = getDb();
+  const empRef = doc(db, EMPRENDEDORES, emp.id);
+  return runTransaction(db, async (tx) => {
+    const s = await tx.get(empRef);
+    const n = (s.exists() ? (s.data().productosCount as number) || 0 : 0) + 1;
+    const codigo = `${emp.prefijo}-${String(n).padStart(4, "0")}`;
+    tx.update(empRef, { productosCount: n });
+    tx.set(doc(db, PRODUCTOS, codigo), {
+      codigo,
+      descripcion: datos.descripcion.trim(),
+      precio: datos.precio,
+      costo: datos.costo ?? 0,
+      stockActual: datos.stock ?? 0,
+      emprendedorId: emp.id,
+      emprendedorNombre: emp.nombre,
+      creadoEn: Date.now(),
+    });
+    return codigo;
+  });
+}
+
+export async function productosDeEmprendedor(empId: string): Promise<Producto[]> {
+  const q = query(collection(getDb(), PRODUCTOS), where("emprendedorId", "==", empId));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Producto);
 }
 
 export async function ultimasVentas(max = 20): Promise<Venta[]> {

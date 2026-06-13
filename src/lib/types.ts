@@ -6,6 +6,20 @@ export interface Producto {
   costo: number;
   precio: number;
   barcode?: string; // código de barras EAN/UPC (opcional)
+  emprendedorId?: string;
+  emprendedorNombre?: string;
+}
+
+// Emprendedor que deja productos en consignación.
+export interface Emprendedor {
+  id: string;
+  nombre: string;
+  contacto?: string;
+  telefono?: string;
+  token: string; // para el link individual /alta/{token}
+  prefijo: string; // prefijo de código de sus productos (ej: MAR)
+  productosCount: number;
+  creadoEn: number;
 }
 
 export interface LineaVenta {
