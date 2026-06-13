@@ -87,7 +87,7 @@ export function EntradasScreen() {
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 space-y-4">
+      <div className="lg:col-span-2 space-y-4 min-w-0">
         <div className="bg-white rounded-xl shadow p-4 anim-in">
           <h1 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
             <PackagePlus className="text-cyan-600" size={22} /> Entrada de productos
@@ -164,8 +164,8 @@ export function EntradasScreen() {
           )}
         </div>
 
-        <div className="bg-white rounded-xl shadow overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-white rounded-xl shadow tabla-scroll">
+          <table className="w-full text-sm min-w-[620px]">
             <thead className="bg-slate-100 text-slate-600">
               <tr>
                 <th className="text-left px-3 py-2">#</th>
@@ -209,7 +209,7 @@ export function EntradasScreen() {
       </div>
 
       {/* Columna derecha: registrar + historial */}
-      <div className="space-y-4">
+      <div className="space-y-4 min-w-0">
         <div className="panel-obsidiana p-5 anim-in">
           <div className="flex items-end justify-between">
             <span className="text-slate-500 uppercase tracking-wide text-xs font-semibold">

@@ -160,7 +160,7 @@ export function StockScreen() {
               <Info size={16} /> {verResumen ? "Ocultar resumen" : "Ver resumen"}
             </button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <label className="text-sm text-slate-600 flex items-center gap-1">
               Umbral bajo:
               <input
@@ -215,8 +215,8 @@ export function StockScreen() {
       </div>
 
       {/* Tabla */}
-      <div className="bg-white rounded-xl shadow overflow-hidden anim-in">
-        <table className="w-full text-sm">
+      <div className="bg-white rounded-xl shadow tabla-scroll anim-in">
+        <table className="w-full text-sm min-w-[760px]">
           <thead className="bg-slate-100 text-slate-600">
             <tr>
               <th className="text-left px-3 py-2">Código</th>

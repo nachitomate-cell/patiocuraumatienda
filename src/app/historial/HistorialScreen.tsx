@@ -150,8 +150,8 @@ export function HistorialScreen() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow overflow-hidden anim-in">
-        <table className="w-full text-sm">
+      <div className="bg-white rounded-xl shadow tabla-scroll anim-in">
+        <table className="w-full text-sm min-w-[620px]">
           <thead className="bg-slate-100 text-slate-600">
             <tr>
               <th className="w-8"></th>

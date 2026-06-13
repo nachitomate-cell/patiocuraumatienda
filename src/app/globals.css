@@ -354,6 +354,32 @@ thead th {
   font-size: 2.4rem;
 }
 
+/* ===== Móvil ===== */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+/* Permite scroll horizontal en tablas anchas dentro de tarjetas */
+.tabla-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+@media (max-width: 640px) {
+  /* Evita el zoom automático de iOS al enfocar un campo */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  /* Tarjetas un poco más compactas en teléfono */
+  .p-5 {
+    padding: 1rem;
+  }
+}
+
 /* Oculta la vista previa de la boleta SOLO en pantalla; al imprimir sí aparece. */
 @media screen {
   .solo-impresion {
