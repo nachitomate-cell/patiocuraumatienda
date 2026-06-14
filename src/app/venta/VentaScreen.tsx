@@ -685,7 +685,14 @@ export function VentaScreen() {
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2">{l.descripcion}</td>
+                  <td className="px-2 py-1.5">
+                    <input
+                      value={l.descripcion}
+                      onChange={(e) => editarLinea(i, { descripcion: e.target.value })}
+                      className="w-full min-w-[9rem] border rounded-lg px-2 py-1"
+                      aria-label="Descripción"
+                    />
+                  </td>
                   <td className="px-2 py-1.5 text-right">
                     <input
                       type="number"
