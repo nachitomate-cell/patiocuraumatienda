@@ -138,6 +138,9 @@ export async function confirmarVenta(
   });
 
   for (const l of venta.items) {
+    // Los productos manuales (fuera de catálogo) no existen como documento,
+    // así que no se les descuenta stock: actualizarlos rompería el lote.
+    if (l.manual || !l.codigo) continue;
     batch.update(doc(db, PRODUCTOS, l.codigo), {
       stockActual: increment(-l.cantidad),
     });

@@ -57,6 +57,10 @@ export function VentaScreen() {
   const [cargandoCat, setCargandoCat] = useState(true);
   const [seleccionado, setSeleccionado] = useState<Producto | null>(null);
   const [cantidad, setCantidad] = useState(1);
+  // Producto manual (fuera de catálogo): descripción y precio a mano.
+  const [modoManual, setModoManual] = useState(false);
+  const [manualDesc, setManualDesc] = useState("");
+  const [manualPrecio, setManualPrecio] = useState(0);
   const [items, setItems] = useState<LineaVenta[]>([]);
   const [msg, setMsg] = useState<string>("");
   const [busy, setBusy] = useState(false);
@@ -109,11 +113,15 @@ export function VentaScreen() {
   }
 
   // Agrega una línea al carrito; si el producto ya está, suma cantidades.
+  // Los manuales (sin código) nunca se fusionan: cada uno es independiente.
   function agregarLinea(linea: LineaVenta) {
     setItems((prev) => {
-      const idx = prev.findIndex(
-        (l) => l.codigo === linea.codigo && l.descuento === linea.descuento
-      );
+      const idx =
+        linea.manual || !linea.codigo
+          ? -1
+          : prev.findIndex(
+              (l) => l.codigo === linea.codigo && l.descuento === linea.descuento
+            );
       if (idx >= 0) {
         const copia = [...prev];
         copia[idx] = { ...copia[idx], cantidad: copia[idx].cantidad + linea.cantidad };
@@ -129,6 +137,42 @@ export function VentaScreen() {
     setCantidad(1);
     setTerm("");
     setMsg("");
+  }
+
+  // Abre el formulario de producto manual (no está en el catálogo o la
+  // descripción no corresponde). Prellena con lo que ya venía escribiendo.
+  function abrirManual() {
+    setModoManual(true);
+    setManualDesc(term.trim());
+    setManualPrecio(0);
+    setCantidad(1);
+    setMsg("");
+  }
+
+  function cerrarManual() {
+    setModoManual(false);
+    setManualDesc("");
+    setManualPrecio(0);
+  }
+
+  // Agrega un producto manual al carrito (no descuenta stock al confirmar).
+  function agregarManual() {
+    const desc = manualDesc.trim();
+    if (!desc) return setMsg("Escriba la descripción del producto.");
+    if (manualPrecio <= 0) return setMsg("Escriba el precio del producto.");
+    if (cantidad <= 0) return setMsg("Cantidad inválida.");
+    setMsg("");
+    agregarLinea({
+      codigo: "",
+      descripcion: desc,
+      precio: manualPrecio,
+      cantidad,
+      descuento: 0,
+      manual: true,
+    });
+    cerrarManual();
+    setTerm("");
+    setCantidad(1);
   }
 
   // Paso 2: confirma la cantidad y lo manda al carrito.
@@ -230,6 +274,7 @@ export function VentaScreen() {
     setTerm("");
     setSeleccionado(null);
     setCantidad(1);
+    cerrarManual();
     setNro("NV-—");
     setMsg("");
     setMedioPago("efectivo");
@@ -294,7 +339,87 @@ export function VentaScreen() {
               modoEscaner ? "border-cyan-400 bg-cyan-50" : "border-slate-200 bg-slate-50"
             }`}
           >
-            {!seleccionado ? (
+            {modoManual ? (
+              <div className="space-y-4 anim-pop">
+                {/* Producto manual: fuera de catálogo, no descuenta stock */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <Plus size={20} className="text-emerald-600" /> Producto manual
+                  </div>
+                  <button
+                    onClick={cerrarManual}
+                    className="text-slate-500 hover:text-white hover:bg-slate-500 p-2 rounded-lg border border-slate-300"
+                    aria-label="Cancelar"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                <label className="block">
+                  <span className="text-sm text-slate-500">Descripción</span>
+                  <input
+                    value={manualDesc}
+                    onChange={(e) => setManualDesc(e.target.value)}
+                    placeholder="Ej: Bebida 1.5 litros"
+                    className="mt-1 w-full border-2 rounded-xl px-4 py-3 text-lg"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="text-sm text-slate-500">Precio (cada uno)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={manualPrecio || ""}
+                    onChange={(e) => setManualPrecio(Number(e.target.value) || 0)}
+                    placeholder="0"
+                    className="mt-1 w-full border-2 rounded-xl px-4 py-3 text-lg"
+                  />
+                </label>
+
+                <div>
+                  <div className="text-sm text-slate-500 mb-1">Cantidad</div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setCantidad((c) => Math.max(1, c - 1))}
+                      className="w-14 h-14 rounded-xl bg-slate-200 hover:bg-slate-300 text-3xl font-bold text-slate-700 flex items-center justify-center"
+                      aria-label="Quitar uno"
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={cantidad}
+                      onChange={(e) => setCantidad(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-20 h-14 border-2 rounded-xl text-center text-2xl font-bold"
+                    />
+                    <button
+                      onClick={() => setCantidad((c) => c + 1)}
+                      className="w-14 h-14 rounded-xl bg-slate-200 hover:bg-slate-300 text-3xl font-bold text-slate-700 flex items-center justify-center"
+                      aria-label="Agregar uno"
+                    >
+                      +
+                    </button>
+                    <div className="ml-auto text-right">
+                      <div className="text-xs text-slate-500">Subtotal</div>
+                      <div className="text-xl font-bold text-slate-900">
+                        {money(cantidad * manualPrecio)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <button
+                  onClick={agregarManual}
+                  className="btn-accion w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl py-4 text-lg flex items-center justify-center gap-2"
+                >
+                  <Plus size={24} /> Agregar al carrito
+                </button>
+              </div>
+            ) : !seleccionado ? (
               <>
                 {/* Paso 1: buscar por nombre */}
                 <label className="block">
@@ -318,38 +443,52 @@ export function VentaScreen() {
                 </label>
 
                 {term.trim() !== "" && !modoEscaner && (
-                  <div className="mt-3 space-y-2 max-h-80 overflow-auto">
+                  <div className="mt-3 space-y-2">
                     {cargandoCat ? (
                       <div className="text-center text-slate-400 py-4">Cargando productos…</div>
-                    ) : resultados.length === 0 ? (
-                      <div className="text-center text-slate-500 py-6 flex flex-col items-center gap-1">
-                        <AlertTriangle size={20} className="text-amber-500" />
-                        No se encontró “{term.trim()}”. Revise el nombre.
-                      </div>
                     ) : (
-                      resultados.map((p) => (
+                      <>
+                        <div className="space-y-2 max-h-72 overflow-auto">
+                          {resultados.length === 0 ? (
+                            <div className="text-center text-slate-500 py-4 flex flex-col items-center gap-1">
+                              <AlertTriangle size={20} className="text-amber-500" />
+                              No se encontró “{term.trim()}” en el catálogo.
+                            </div>
+                          ) : (
+                            resultados.map((p) => (
+                              <button
+                                key={p.codigo}
+                                onClick={() => elegir(p)}
+                                className="w-full flex items-center justify-between gap-3 text-left rounded-xl border-2 border-slate-200 bg-white hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 px-4 py-3"
+                              >
+                                <span className="font-semibold text-slate-800 text-base leading-tight">
+                                  {p.descripcion}
+                                </span>
+                                <span className="text-right shrink-0">
+                                  <span className="block font-bold text-slate-900">
+                                    {money(p.precio)}
+                                  </span>
+                                  <span
+                                    className={`text-xs ${
+                                      p.stockActual <= 0 ? "text-red-500" : "text-slate-500"
+                                    }`}
+                                  >
+                                    Stock: {p.stockActual}
+                                  </span>
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+
+                        {/* No está, o la descripción no corresponde: agregar a mano */}
                         <button
-                          key={p.codigo}
-                          onClick={() => elegir(p)}
-                          className="w-full flex items-center justify-between gap-3 text-left rounded-xl border-2 border-slate-200 bg-white hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 px-4 py-3"
+                          onClick={abrirManual}
+                          className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100 font-semibold px-4 py-3"
                         >
-                          <span className="font-semibold text-slate-800 text-base leading-tight">
-                            {p.descripcion}
-                          </span>
-                          <span className="text-right shrink-0">
-                            <span className="block font-bold text-slate-900">
-                              {money(p.precio)}
-                            </span>
-                            <span
-                              className={`text-xs ${
-                                p.stockActual <= 0 ? "text-red-500" : "text-slate-500"
-                              }`}
-                            >
-                              Stock: {p.stockActual}
-                            </span>
-                          </span>
+                          <Plus size={18} /> No está en la lista — agregar a mano
                         </button>
-                      ))
+                      </>
                     )}
                   </div>
                 )}
@@ -451,7 +590,13 @@ export function VentaScreen() {
               {items.map((l, i) => (
                 <tr key={i} className="border-t anim-pop">
                   <td className="px-3 py-2">{i + 1}</td>
-                  <td className="px-3 py-2 font-mono">{l.codigo}</td>
+                  <td className="px-3 py-2 font-mono">
+                    {l.codigo || (
+                      <span className="text-[11px] font-sans font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">
+                        Manual
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2">{l.descripcion}</td>
                   <td className="px-3 py-2 text-right">{l.cantidad}</td>
                   <td className="px-3 py-2 text-right">{money(l.precio)}</td>

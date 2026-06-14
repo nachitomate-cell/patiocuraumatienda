@@ -28,6 +28,7 @@ export interface LineaVenta {
   cantidad: number;
   precio: number;
   descuento: number; // porcentaje 0-100
+  manual?: boolean; // producto fuera de catálogo: no descuenta stock
 }
 
 export type MedioPago = "efectivo" | "transferencia" | "fiado";
