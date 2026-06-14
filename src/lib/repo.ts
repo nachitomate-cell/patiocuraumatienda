@@ -420,6 +420,19 @@ export async function ultimasVentas(max = 20): Promise<Venta[]> {
   return snap.docs.map((d) => d.data() as Venta);
 }
 
+// Ventas dentro de un rango de tiempo [desde, hasta] en epoch ms (para el CRM).
+// Rango + orden sobre el mismo campo no requiere índice compuesto.
+export async function ventasEnRango(desde: number, hasta: number): Promise<Venta[]> {
+  const q = query(
+    collection(getDb(), VENTAS),
+    where("creadoEn", ">=", desde),
+    where("creadoEn", "<=", hasta),
+    orderBy("creadoEn", "asc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Venta);
+}
+
 // Correlativo EN-### para documentos de entrada.
 export async function siguienteNroEntrada(): Promise<string> {
   const db = getDb();

@@ -2,34 +2,15 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Settings, Upload, Download, FileSpreadsheet, Store, ChevronRight } from "lucide-react";
+import { Settings, Download, FileSpreadsheet, Store, ChevronRight } from "lucide-react";
 import * as XLSX from "xlsx";
-import { importarCatalogo, ultimasVentas } from "@/lib/repo";
+import { ultimasVentas } from "@/lib/repo";
 import seed from "@/data/productos.seed.json";
 import type { Producto, Venta } from "@/lib/types";
 import { money } from "@/lib/format";
 
 export function AdminScreen() {
-  const [prog, setProg] = useState<{ hechos: number; total: number } | null>(null);
-  const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-
-  async function importar() {
-    if (!confirm(`Se cargarán ${(seed as Producto[]).length} productos a Firestore. ¿Continuar?`))
-      return;
-    setBusy(true);
-    setMsg("");
-    try {
-      await importarCatalogo(seed as Producto[], (hechos, total) =>
-        setProg({ hechos, total })
-      );
-      setMsg("✅ Catálogo importado correctamente.");
-    } catch (e) {
-      setMsg("Error al importar. Revise conexión y reglas de Firestore.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function exportarVentas() {
     setBusy(true);
@@ -71,7 +52,7 @@ export function AdminScreen() {
           <Settings className="text-cyan-600" size={22} /> Administración
         </h1>
         <p className="text-sm text-slate-500">
-          Carga inicial del catálogo y respaldos a archivo.
+          Emprendedores y respaldos de tus datos a archivo.
         </p>
       </div>
 
@@ -94,24 +75,7 @@ export function AdminScreen() {
       </Link>
 
       <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
-        <h2 className="font-semibold text-slate-800">1. Importar catálogo a Firestore</h2>
-        <p className="text-sm text-slate-500">
-          Sube los {(seed as Producto[]).length} productos extraídos del Excel original a la
-          colección <code className="bg-slate-100 px-1 rounded">productos</code>. Solo se hace
-          una vez (o cuando actualices precios).
-        </p>
-        <button
-          onClick={importar}
-          disabled={busy}
-          className="btn-accion bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-4 py-2.5 flex items-center gap-2 disabled:opacity-50"
-        >
-          <Upload size={18} />
-          {busy && prog ? `Importando ${prog.hechos}/${prog.total}…` : "Importar catálogo"}
-        </button>
-      </div>
-
-      <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
-        <h2 className="font-semibold text-slate-800">2. Respaldos a archivo (.xlsx)</h2>
+        <h2 className="font-semibold text-slate-800">Respaldos a archivo (.xlsx)</h2>
         <div className="flex gap-2 flex-wrap">
           <button
             onClick={exportarVentas}
@@ -128,10 +92,6 @@ export function AdminScreen() {
           </button>
         </div>
       </div>
-
-      {msg && (
-        <div className="text-sm rounded bg-slate-100 border border-slate-200 px-3 py-2">{msg}</div>
-      )}
     </div>
   );
 }

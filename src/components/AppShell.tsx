@@ -11,6 +11,7 @@ import {
   History,
   Notebook,
   Store,
+  BarChart3,
   Settings,
   LogOut,
   ZoomIn,
@@ -26,6 +27,7 @@ const NAV = [
   { href: "/etiquetas", label: "Etiquetas", Icon: Barcode },
   { href: "/fiados", label: "Fiados", Icon: Notebook },
   { href: "/emprendedores", label: "Emprendedores", Icon: Store },
+  { href: "/crm", label: "CRM", Icon: BarChart3 },
   { href: "/historial", label: "Historial", Icon: History },
   { href: "/admin", label: "Admin", Icon: Settings },
 ];

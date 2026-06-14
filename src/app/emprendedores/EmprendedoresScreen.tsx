@@ -22,6 +22,7 @@ import {
   normalizarPrefijo,
 } from "@/lib/repo";
 import type { Emprendedor, Producto } from "@/lib/types";
+import { Modal } from "@/components/Modal";
 
 export function EmprendedoresScreen() {
   const [lista, setLista] = useState<Emprendedor[]>([]);
@@ -46,6 +47,7 @@ export function EmprendedoresScreen() {
 
   const [copiado, setCopiado] = useState("");
   const [origin, setOrigin] = useState("");
+  const [confirmando, setConfirmando] = useState<Emprendedor | null>(null);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -138,14 +140,12 @@ export function EmprendedoresScreen() {
     }
   }
 
-  async function eliminar(e: Emprendedor) {
-    const ok = window.confirm(
-      `¿Eliminar al emprendedor "${e.nombre}"?\n\nSus productos (${e.prefijo}…) seguirán en el stock; solo se borra la ficha del emprendedor.`
-    );
-    if (!ok) return;
+  async function confirmarEliminar() {
+    if (!confirmando) return;
     setBusy(true);
     try {
-      await eliminarEmprendedor(e.id);
+      await eliminarEmprendedor(confirmando.id);
+      setConfirmando(null);
       await cargar();
     } finally {
       setBusy(false);
@@ -325,7 +325,7 @@ export function EmprendedoresScreen() {
                       <Pencil size={16} /> Editar
                     </button>
                     <button
-                      onClick={() => eliminar(e)}
+                      onClick={() => setConfirmando(e)}
                       disabled={busy}
                       className="flex items-center gap-1.5 border border-red-300 text-red-600 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
                       aria-label="Eliminar"
@@ -343,6 +343,37 @@ export function EmprendedoresScreen() {
           )}
         </ul>
       </div>
+
+      {/* Confirmación de borrado (modal nativo) */}
+      <Modal
+        abierto={!!confirmando}
+        onCerrar={() => setConfirmando(null)}
+        titulo="Eliminar emprendedor"
+        maxW="max-w-md"
+      >
+        <p className="text-slate-700">
+          ¿Eliminar a <strong>{confirmando?.nombre}</strong>?
+        </p>
+        <p className="text-sm text-slate-500 mt-1">
+          Sus productos (<span className="font-mono">{confirmando?.prefijo}…</span>) seguirán en el
+          stock; solo se borra la ficha del emprendedor.
+        </p>
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={confirmarEliminar}
+            disabled={busy}
+            className="btn-accion flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg py-2.5 disabled:opacity-50"
+          >
+            Sí, eliminar
+          </button>
+          <button
+            onClick={() => setConfirmando(null)}
+            className="flex-1 border border-slate-300 text-slate-700 font-semibold rounded-lg py-2.5 hover:bg-slate-100"
+          >
+            Cancelar
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
