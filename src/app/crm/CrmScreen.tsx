@@ -18,6 +18,7 @@ import type { Venta } from "@/lib/types";
 import { money } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { SelectorFecha } from "@/components/SelectorFecha";
+import { useAtajos } from "@/lib/useAtajos";
 
 type Preset = "dia" | "semana" | "mes" | "anio" | "custom";
 
@@ -201,6 +202,14 @@ export function CrmScreen() {
     setPreset("custom");
     setModalRango(false);
   }
+
+  useAtajos({
+    "alt+d": () => setPreset("dia"),
+    "alt+s": () => setPreset("semana"),
+    "alt+m": () => setPreset("mes"),
+    "alt+a": () => setPreset("anio"),
+    "alt+p": () => setModalRango(true),
+  });
 
   return (
     <div className="space-y-4">

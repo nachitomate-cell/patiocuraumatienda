@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Boxes,
   Search,
@@ -21,6 +21,7 @@ import * as XLSX from "xlsx";
 import { todosLosProductos, ajustarProducto } from "@/lib/repo";
 import type { Producto } from "@/lib/types";
 import { money } from "@/lib/format";
+import { useAtajos } from "@/lib/useAtajos";
 
 type Filtro = "todos" | "con" | "bajo" | "sin";
 
@@ -34,6 +35,7 @@ export function StockScreen() {
   const [verResumen, setVerResumen] = useState(false);
   const [pagina, setPagina] = useState(1);
   const PAGE = 50;
+  const buscarRef = useRef<HTMLInputElement>(null);
 
   // Edición inline
   const [editando, setEditando] = useState<string | null>(null);
@@ -132,6 +134,13 @@ export function StockScreen() {
     XLSX.writeFile(wb, `inventario_patio_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
+  useAtajos({
+    "alt+b": () => buscarRef.current?.focus(),
+    "alt+r": () => cargar(true),
+    "alt+arrowright": () => setPagina((p) => Math.min(totalPaginas, p + 1)),
+    "alt+arrowleft": () => setPagina((p) => Math.max(1, p - 1)),
+  });
+
   const TABS: { id: Filtro; label: string }[] = [
     { id: "todos", label: "Todos" },
     { id: "con", label: "Con stock" },
@@ -201,6 +210,7 @@ export function StockScreen() {
         <div className="relative mb-3">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
+            ref={buscarRef}
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             placeholder="Buscar por código o descripción…"

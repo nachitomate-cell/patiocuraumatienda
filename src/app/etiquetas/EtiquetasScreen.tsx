@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Barcode, Search, Plus, X, Printer, Trash2, Layers } from "lucide-react";
 import { todosLosProductos } from "@/lib/repo";
 import type { Producto } from "@/lib/types";
 import { money } from "@/lib/format";
 import { CodigoBarra } from "@/components/CodigoBarra";
+import { useAtajos } from "@/lib/useAtajos";
 
 const MAX_ETIQUETAS = 200;
 
@@ -16,6 +17,7 @@ export function EtiquetasScreen() {
   const [prefijo, setPrefijo] = useState("");
   // selección: codigo -> cantidad de etiquetas
   const [sel, setSel] = useState<Record<string, number>>({});
+  const buscarRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     todosLosProductos()
@@ -87,6 +89,13 @@ export function EtiquetasScreen() {
     }
   }
 
+  useAtajos({
+    "alt+b": () => buscarRef.current?.focus(),
+    "alt+i": () => {
+      if (etiquetas.length > 0) window.print();
+    },
+  });
+
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-xl shadow p-4 anim-in">
@@ -110,6 +119,7 @@ export function EtiquetasScreen() {
         <div className="relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
+            ref={buscarRef}
             value={term}
             onChange={(e) => setTerm(e.target.value)}
             placeholder={cargando ? "Cargando catálogo…" : "Buscar por código o descripción…"}

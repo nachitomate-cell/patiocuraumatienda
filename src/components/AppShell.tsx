@@ -1,8 +1,9 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   ShoppingCart,
   PackagePlus,
@@ -16,9 +17,12 @@ import {
   LogOut,
   ZoomIn,
   ZoomOut,
+  Keyboard,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useUiMode } from "@/lib/uimode";
+import { useAtajos } from "@/lib/useAtajos";
+import { AtajosAyuda } from "@/components/AtajosAyuda";
 
 const NAV = [
   { href: "/venta", label: "Venta", Icon: ShoppingCart },
@@ -34,8 +38,18 @@ const NAV = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const router = useRouter();
   const { user, logout, configured } = useAuth();
   const { mode, toggle } = useUiMode();
+  const [ayuda, setAyuda] = useState(false);
+
+  // Atajos globales: Alt+1..9 navega a cada sección; "?" abre la ayuda.
+  useAtajos({
+    ...Object.fromEntries(
+      NAV.slice(0, 9).map((item, i) => [`alt+${i + 1}`, () => router.push(item.href)])
+    ),
+    "?": () => setAyuda((a) => !a),
+  });
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -92,6 +106,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </>
             )}
             <button
+              onClick={() => setAyuda(true)}
+              title="Atajos de teclado (?)"
+              aria-label="Atajos de teclado"
+              className="flex items-center justify-center p-1.5 rounded-lg border border-slate-600 hover:bg-slate-700"
+            >
+              <Keyboard size={16} />
+            </button>
+            <button
               onClick={toggle}
               title="Cambiar tamaño de la vista"
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-600 hover:bg-slate-700 font-semibold whitespace-nowrap"
@@ -104,6 +126,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+
+      <AtajosAyuda abierto={ayuda} onCerrar={() => setAyuda(false)} />
 
       <main
         className={`flex-1 mx-auto w-full max-w-[1600px] px-2 sm:px-4 py-6 ${

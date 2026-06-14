@@ -36,6 +36,7 @@ import {
 } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
+import { useAtajos } from "@/lib/useAtajos";
 import { Ticket } from "@/components/Ticket";
 import { EscanerCamara } from "@/components/EscanerCamara";
 
@@ -280,6 +281,21 @@ export function VentaScreen() {
     setMedioPago("efectivo");
     setClienteId("");
   }
+
+  // Atajos de teclado de la pantalla de venta.
+  useAtajos({
+    "alt+b": () => {
+      setSeleccionado(null);
+      setModoManual(false);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    },
+    "alt+s": activarEscaner,
+    "alt+e": () => setMedioPago("efectivo"),
+    "alt+t": () => setMedioPago("transferencia"),
+    "alt+f": () => setMedioPago("fiado"),
+    "alt+g": () => confirmar(),
+    "alt+n": nuevaVenta,
+  });
 
   return (
     <div className="grid lg:grid-cols-3 gap-6">
