@@ -13,9 +13,10 @@ import {
   ArrowLeftRight,
   Notebook,
   CalendarRange,
+  Target,
   RefreshCw,
 } from "lucide-react";
-import { ventasEnRango } from "@/lib/repo";
+import { ventasEnRango, getMetaDiaria } from "@/lib/repo";
 import type { Venta } from "@/lib/types";
 import { money } from "@/lib/format";
 import { Modal } from "@/components/Modal";
@@ -136,6 +137,13 @@ export function CrmScreen() {
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+  const [metaDiaria, setMetaDiaria] = useState(0);
+
+  useEffect(() => {
+    getMetaDiaria()
+      .then(setMetaDiaria)
+      .catch(() => {});
+  }, []);
 
   const { desde, hasta, etiqueta } = useMemo(
     () => rangoDe(preset, desdeIso, hastaIso),
@@ -197,6 +205,11 @@ export function CrmScreen() {
   const serie = useMemo(() => construirSerie(ventas, desde, hasta), [ventas, desde, hasta]);
   const maxBarra = Math.max(1, ...serie.map((b) => b.total));
   const maxTop = Math.max(1, ...m.top.map((t) => t.monto));
+
+  // Meta del periodo = meta diaria × días del rango.
+  const diasRango = Math.max(1, Math.round((hasta - desde) / 86400000));
+  const metaPeriodo = metaDiaria * diasRango;
+  const pctMeta = metaPeriodo > 0 ? (m.total / metaPeriodo) * 100 : 0;
 
   const PRESETS: { id: Preset; label: string }[] = [
     { id: "dia", label: "Día" },
@@ -300,6 +313,44 @@ export function CrmScreen() {
           cargando={cargando}
         />
       </div>
+
+      {/* Meta del periodo */}
+      {metaDiaria > 0 && (
+        <div className="bg-white rounded-xl shadow p-4 anim-in">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+              <Target size={18} className="text-cyan-600" /> Meta del periodo
+            </h2>
+            <span className="text-sm text-slate-500">
+              {money(m.total)} de{" "}
+              <strong className="text-slate-700">{money(metaPeriodo)}</strong>{" "}
+              ({diasRango} día{diasRango > 1 ? "s" : ""} × {money(metaDiaria)})
+            </span>
+          </div>
+          <div className="h-5 bg-slate-100 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                pctMeta >= 100 ? "bg-emerald-500" : "bg-cyan-500"
+              }`}
+              style={{ width: `${Math.min(100, pctMeta)}%` }}
+            />
+          </div>
+          <div className="mt-1.5 flex justify-between text-sm flex-wrap gap-1">
+            <span
+              className={`font-semibold ${
+                pctMeta >= 100 ? "text-emerald-600" : "text-slate-700"
+              }`}
+            >
+              {pctMeta.toFixed(0)}%{pctMeta >= 100 ? " · ¡Meta cumplida! 🎉" : ""}
+            </span>
+            <span className="text-slate-500">
+              {pctMeta >= 100
+                ? `+${money(m.total - metaPeriodo)} sobre la meta`
+                : `Faltan ${money(metaPeriodo - m.total)}`}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Gráfico de ventas en el tiempo */}
       <div className="bg-white rounded-xl shadow p-4 anim-in">

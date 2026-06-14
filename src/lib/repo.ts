@@ -34,6 +34,7 @@ const ENTRADAS = "entradas";
 const CLIENTES = "clientes";
 const EMPRENDEDORES = "emprendedores";
 const CONTADORES = "contadores";
+const CONFIG = "config";
 
 function hoy(): string {
   return new Date().toISOString().slice(0, 10);
@@ -431,6 +432,23 @@ export async function ventasEnRango(desde: number, hasta: number): Promise<Venta
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data() as Venta);
+}
+
+// ===== Metas de venta (configuración del CRM) =====
+// Se guarda una meta diaria; el CRM la escala por la cantidad de días del
+// periodo (semana, mes, etc.). Documento único config/metas.
+
+export async function getMetaDiaria(): Promise<number> {
+  const snap = await getDoc(doc(getDb(), CONFIG, "metas"));
+  return snap.exists() ? Number(snap.data().diaria) || 0 : 0;
+}
+
+export async function guardarMetaDiaria(diaria: number): Promise<void> {
+  await setDoc(
+    doc(getDb(), CONFIG, "metas"),
+    { diaria: Math.max(0, Math.round(diaria || 0)), actualizado: Date.now() },
+    { merge: true }
+  );
 }
 
 // Correlativo EN-### para documentos de entrada.

@@ -1,16 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Settings, Download, FileSpreadsheet, Store, ChevronRight } from "lucide-react";
+import {
+  Settings,
+  Download,
+  FileSpreadsheet,
+  Store,
+  ChevronRight,
+  Target,
+  Check,
+} from "lucide-react";
 import * as XLSX from "xlsx";
-import { ultimasVentas } from "@/lib/repo";
+import { ultimasVentas, getMetaDiaria, guardarMetaDiaria } from "@/lib/repo";
 import seed from "@/data/productos.seed.json";
 import type { Producto, Venta } from "@/lib/types";
 import { money } from "@/lib/format";
 
 export function AdminScreen() {
   const [busy, setBusy] = useState(false);
+  const [meta, setMeta] = useState(0);
+  const [cargandoMeta, setCargandoMeta] = useState(true);
+  const [guardandoMeta, setGuardandoMeta] = useState(false);
+  const [metaGuardada, setMetaGuardada] = useState(false);
+
+  useEffect(() => {
+    getMetaDiaria()
+      .then(setMeta)
+      .catch(() => {})
+      .finally(() => setCargandoMeta(false));
+  }, []);
+
+  async function guardarMeta() {
+    setGuardandoMeta(true);
+    setMetaGuardada(false);
+    try {
+      await guardarMetaDiaria(meta);
+      setMetaGuardada(true);
+      setTimeout(() => setMetaGuardada(false), 2500);
+    } finally {
+      setGuardandoMeta(false);
+    }
+  }
 
   async function exportarVentas() {
     setBusy(true);
@@ -73,6 +104,46 @@ export function AdminScreen() {
         </span>
         <ChevronRight className="text-slate-400" />
       </Link>
+
+      {/* Meta de venta diaria (la usa el CRM) */}
+      <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
+        <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+          <Target size={18} className="text-cyan-600" /> Meta de venta diaria
+        </h2>
+        <p className="text-sm text-slate-500">
+          El CRM muestra tu progreso contra esta meta. La semana y el mes se calculan
+          automáticamente a partir de la meta diaria.
+        </p>
+        <div className="flex items-end gap-2 flex-wrap">
+          <label className="text-sm">
+            <span className="text-slate-500">Meta diaria ($)</span>
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              value={meta || ""}
+              onChange={(e) => setMeta(Math.max(0, Number(e.target.value) || 0))}
+              placeholder={cargandoMeta ? "…" : "0"}
+              className="mt-1 w-44 border-2 rounded-xl px-4 py-2.5 text-lg"
+            />
+          </label>
+          <button
+            onClick={guardarMeta}
+            disabled={guardandoMeta || cargandoMeta}
+            className="btn-accion bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-4 py-2.5 flex items-center gap-2 disabled:opacity-50"
+          >
+            {metaGuardada && <Check size={18} />}
+            {guardandoMeta ? "Guardando…" : metaGuardada ? "Guardada" : "Guardar meta"}
+          </button>
+        </div>
+        {meta > 0 && (
+          <div className="text-sm text-slate-600 flex flex-wrap gap-x-5 gap-y-1">
+            <span>Día: <strong className="text-slate-800">{money(meta)}</strong></span>
+            <span>Semana (×7): <strong className="text-slate-800">{money(meta * 7)}</strong></span>
+            <span>Mes (×30): <strong className="text-slate-800">{money(meta * 30)}</strong></span>
+          </div>
+        )}
+      </div>
 
       <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
         <h2 className="font-semibold text-slate-800">Respaldos a archivo (.xlsx)</h2>
