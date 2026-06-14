@@ -102,6 +102,13 @@ export function VentaScreen() {
       .slice(0, 12);
   }, [term, catalogo]);
 
+  // Cuántas unidades de cada código hay ya en el carrito (para mostrarlo).
+  const enCarritoPorCodigo = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const l of items) m.set(l.codigo, (m.get(l.codigo) ?? 0) + l.cantidad);
+    return m;
+  }, [items]);
+
   async function agregarCliente() {
     const n = nuevoCliente.trim();
     if (!n) return;
@@ -140,6 +147,24 @@ export function VentaScreen() {
     setCantidad(1);
     setTerm("");
     setMsg("");
+  }
+
+  // Agregado rápido: suma 1 al carrito SIN cerrar la lista, para ir
+  // agregando varios productos seguidos sin volver a buscar.
+  function agregarRapido(p: Producto) {
+    const yaEnCarrito = enCarritoPorCodigo.get(p.codigo) ?? 0;
+    if (yaEnCarrito + 1 > p.stockActual) {
+      setMsg(`Stock insuficiente: quedan ${p.stockActual} de ${p.descripcion}.`);
+      return;
+    }
+    setMsg("");
+    agregarLinea({
+      codigo: p.codigo,
+      descripcion: p.descripcion,
+      precio: p.precio,
+      cantidad: 1,
+      descuento: 0,
+    });
   }
 
   // Abre el formulario de producto manual (no está en el catálogo o la
@@ -475,29 +500,58 @@ export function VentaScreen() {
                               No se encontró “{term.trim()}” en el catálogo.
                             </div>
                           ) : (
-                            resultados.map((p) => (
-                              <button
-                                key={p.codigo}
-                                onClick={() => elegir(p)}
-                                className="w-full flex items-center justify-between gap-3 text-left rounded-xl border-2 border-slate-200 bg-white hover:border-cyan-400 hover:bg-cyan-50 active:bg-cyan-100 px-4 py-3"
-                              >
-                                <span className="font-semibold text-slate-800 text-base leading-tight">
-                                  {p.descripcion}
-                                </span>
-                                <span className="text-right shrink-0">
-                                  <span className="block font-bold text-slate-900">
-                                    {money(p.precio)}
-                                  </span>
-                                  <span
-                                    className={`text-xs ${
-                                      p.stockActual <= 0 ? "text-red-500" : "text-slate-500"
-                                    }`}
+                            resultados.map((p) => {
+                              const enCarrito = enCarritoPorCodigo.get(p.codigo) ?? 0;
+                              const sinStock = p.stockActual <= 0;
+                              return (
+                                <div
+                                  key={p.codigo}
+                                  className="w-full flex items-stretch gap-px rounded-xl border-2 border-slate-200 bg-white overflow-hidden"
+                                >
+                                  {/* Tocar el nombre: abre el paso de cantidad */}
+                                  <button
+                                    onClick={() => elegir(p)}
+                                    className="flex-1 min-w-0 flex items-center justify-between gap-3 text-left px-4 py-3 hover:bg-cyan-50 active:bg-cyan-100"
                                   >
-                                    Stock: {p.stockActual}
-                                  </span>
-                                </span>
-                              </button>
-                            ))
+                                    <span className="min-w-0">
+                                      <span className="block font-semibold text-slate-800 text-base leading-tight truncate">
+                                        {p.descripcion}
+                                      </span>
+                                      <span className="block text-xs leading-tight">
+                                        <span className="font-mono text-slate-400">{p.codigo}</span>
+                                        {enCarrito > 0 && (
+                                          <span className="ml-2 font-semibold text-emerald-600">
+                                            ✓ {enCarrito} en carrito
+                                          </span>
+                                        )}
+                                      </span>
+                                    </span>
+                                    <span className="text-right shrink-0">
+                                      <span className="block font-bold text-slate-900">
+                                        {money(p.precio)}
+                                      </span>
+                                      <span
+                                        className={`text-xs ${
+                                          sinStock ? "text-red-500" : "text-slate-500"
+                                        }`}
+                                      >
+                                        Stock: {p.stockActual}
+                                      </span>
+                                    </span>
+                                  </button>
+                                  {/* Botón +: agrega 1 y deja la lista abierta (agregar varios) */}
+                                  <button
+                                    onClick={() => agregarRapido(p)}
+                                    disabled={sinStock}
+                                    title="Agregar 1 al carrito"
+                                    aria-label={`Agregar ${p.descripcion} al carrito`}
+                                    className="shrink-0 w-16 flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white disabled:opacity-40"
+                                  >
+                                    <Plus size={24} />
+                                  </button>
+                                </div>
+                              );
+                            })
                           )}
                         </div>
 
