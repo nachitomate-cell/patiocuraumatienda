@@ -31,7 +31,7 @@ export interface LineaVenta {
   manual?: boolean; // producto fuera de catálogo: no descuenta stock
 }
 
-export type MedioPago = "efectivo" | "transferencia" | "fiado";
+export type MedioPago = "efectivo" | "debito" | "credito" | "transferencia" | "fiado";
 
 export interface Venta {
   nro: string;

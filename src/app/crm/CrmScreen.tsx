@@ -9,6 +9,8 @@ import {
   Package,
   Banknote,
   CreditCard,
+  WalletCards,
+  ArrowLeftRight,
   Notebook,
   CalendarRange,
   RefreshCw,
@@ -160,7 +162,13 @@ export function CrmScreen() {
   const m = useMemo(() => {
     let total = 0,
       unidades = 0;
-    const medios = { efectivo: 0, transferencia: 0, fiado: 0 } as Record<string, number>;
+    const medios = {
+      efectivo: 0,
+      debito: 0,
+      credito: 0,
+      transferencia: 0,
+      fiado: 0,
+    } as Record<string, number>;
     const prod = new Map<string, { desc: string; monto: number; cant: number }>();
     for (const v of ventas) {
       total += v.total;
@@ -339,10 +347,24 @@ export function CrmScreen() {
             />
             <MedioPago
               icon={<CreditCard size={18} />}
+              label="Débito"
+              monto={m.medios.debito}
+              total={m.total}
+              color="bg-cyan-500"
+            />
+            <MedioPago
+              icon={<WalletCards size={18} />}
+              label="Crédito"
+              monto={m.medios.credito}
+              total={m.total}
+              color="bg-violet-500"
+            />
+            <MedioPago
+              icon={<ArrowLeftRight size={18} />}
               label="Transferencia"
               monto={m.medios.transferencia}
               total={m.total}
-              color="bg-cyan-500"
+              color="bg-sky-500"
             />
             <MedioPago
               icon={<Notebook size={18} />}

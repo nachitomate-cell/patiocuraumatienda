@@ -44,6 +44,8 @@ export const GRUPOS_ATAJOS: Grupo[] = [
       { teclas: ["Enter"], desc: "Agregar (en modo escáner)" },
       { teclas: ["Alt", "S"], desc: "Modo escáner on/off" },
       { teclas: ["Alt", "E"], desc: "Pago: Efectivo" },
+      { teclas: ["Alt", "D"], desc: "Pago: Débito" },
+      { teclas: ["Alt", "C"], desc: "Pago: Crédito" },
       { teclas: ["Alt", "T"], desc: "Pago: Transferencia" },
       { teclas: ["Alt", "F"], desc: "Pago: Fiado" },
       { teclas: ["Alt", "G"], desc: "Confirmar (guardar) venta" },

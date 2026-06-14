@@ -16,6 +16,8 @@ import {
   Camera,
   Banknote,
   CreditCard,
+  WalletCards,
+  ArrowLeftRight,
   Notebook,
   UserPlus,
 } from "lucide-react";
@@ -291,6 +293,8 @@ export function VentaScreen() {
     },
     "alt+s": activarEscaner,
     "alt+e": () => setMedioPago("efectivo"),
+    "alt+d": () => setMedioPago("debito"),
+    "alt+c": () => setMedioPago("credito"),
     "alt+t": () => setMedioPago("transferencia"),
     "alt+f": () => setMedioPago("fiado"),
     "alt+g": () => confirmar(),
@@ -656,7 +660,9 @@ export function VentaScreen() {
               {(
                 [
                   { id: "efectivo", label: "Efectivo", Icon: Banknote },
-                  { id: "transferencia", label: "Transfer.", Icon: CreditCard },
+                  { id: "debito", label: "Débito", Icon: CreditCard },
+                  { id: "credito", label: "Crédito", Icon: WalletCards },
+                  { id: "transferencia", label: "Transfer.", Icon: ArrowLeftRight },
                   { id: "fiado", label: "Fiado", Icon: Notebook },
                 ] as const
               ).map(({ id, label, Icon }) => (
