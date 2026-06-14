@@ -98,7 +98,7 @@ export function EtiquetasScreen() {
 
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-xl shadow p-4 anim-in">
+      <div className="bg-white rounded-xl shadow p-4 anim-in no-print">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Barcode className="text-cyan-600" size={22} /> Imprimir etiquetas
@@ -181,7 +181,7 @@ export function EtiquetasScreen() {
 
       {/* Selección */}
       {seleccionados.length > 0 && (
-        <div className="bg-white rounded-xl shadow p-4 anim-in">
+        <div className="bg-white rounded-xl shadow p-4 anim-in no-print">
           <div className="flex items-center justify-between mb-2">
             <h2 className="font-semibold text-slate-800">
               Seleccionados ({totalEtiquetas} etiquetas)
@@ -235,18 +235,16 @@ export function EtiquetasScreen() {
       {etiquetas.length > 0 && (
         <div className="bg-white rounded-xl shadow p-4 anim-in">
           <h2 className="font-semibold text-slate-800 mb-3 no-print">Vista previa</h2>
-          <div id="etiquetas-print" className="flex flex-wrap gap-2">
+          <div id="etiquetas-print">
             {etiquetas.map((p, i) => (
-              <div
-                key={i}
-                className="etiqueta border border-slate-300 rounded p-2 text-center"
-                style={{ width: "5.2cm" }}
-              >
-                <div className="text-[11px] font-semibold leading-tight truncate text-slate-900">
-                  {p.descripcion}
+              <div key={i} className="etiqueta">
+                <div className="et-top">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/logo.png" alt="" className="et-logo" />
+                  <span className="et-desc">{p.descripcion}</span>
                 </div>
-                <CodigoBarra value={p.barcode?.trim() || p.codigo} height={38} />
-                <div className="text-sm font-bold text-slate-900">{money(p.precio)}</div>
+                <CodigoBarra value={p.barcode?.trim() || p.codigo} height={34} />
+                <div className="et-precio">{money(p.precio)}</div>
               </div>
             ))}
           </div>

@@ -393,6 +393,53 @@ thead th {
   }
 }
 
+/* ===== Etiquetas para stickers ===== */
+.etiqueta {
+  width: 5cm;
+  box-sizing: border-box;
+  padding: 2mm;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8mm;
+  text-align: center;
+  background: #fff;
+  border: 1px dashed #cbd5e1; /* guía de corte */
+  border-radius: 3px;
+}
+.etiqueta .et-top {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2mm;
+  width: 100%;
+}
+.etiqueta .et-logo {
+  height: 4.5mm;
+  width: auto;
+  flex: none;
+}
+.etiqueta .et-desc {
+  font-size: 7.5pt;
+  font-weight: 600;
+  line-height: 1.05;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.etiqueta .et-precio {
+  font-size: 10pt;
+  font-weight: 700;
+  color: #0f172a;
+}
+#etiquetas-print {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2mm;
+}
+
 /* Oculta la vista previa de la boleta SOLO en pantalla; al imprimir sí aparece. */
 @media screen {
   .solo-impresion {
@@ -400,8 +447,12 @@ thead th {
   }
 }
 
-/* Solo el ticket o las etiquetas se imprimen; el resto se oculta. */
+/* Solo el ticket o las etiquetas se imprimen; el resto se oculta por completo
+   (display:none colapsa el espacio: así no quedan páginas en blanco). */
 @media print {
+  @page {
+    margin: 6mm;
+  }
   body * {
     visibility: hidden;
   }
@@ -422,11 +473,15 @@ thead th {
     left: 0;
     top: 0;
     width: 100%;
+    gap: 0; /* stickers pegados; se cortan por la guía */
   }
   .no-print {
     display: none !important;
   }
   .etiqueta {
     break-inside: avoid;
+    border: 1px dashed #d1d5db;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }
