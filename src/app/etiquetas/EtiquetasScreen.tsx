@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Barcode, Search, Plus, X, Printer, Trash2 } from "lucide-react";
+import { Barcode, Search, Plus, X, Printer, Trash2, Layers } from "lucide-react";
 import { todosLosProductos } from "@/lib/repo";
 import type { Producto } from "@/lib/types";
 import { money } from "@/lib/format";
@@ -13,6 +13,7 @@ export function EtiquetasScreen() {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [cargando, setCargando] = useState(true);
   const [term, setTerm] = useState("");
+  const [prefijo, setPrefijo] = useState("");
   // selección: codigo -> cantidad de etiquetas
   const [sel, setSel] = useState<Record<string, number>>({});
 
@@ -53,6 +54,24 @@ export function EtiquetasScreen() {
       delete c[cod];
       return c;
     });
+  }
+
+  // Productos cuyo código empieza con el prefijo (ej. ACAI, AMON).
+  const prefijoNorm = prefijo.trim().toUpperCase();
+  const coincidenPrefijo = useMemo(() => {
+    if (!prefijoNorm) return [];
+    return productos.filter((p) => p.codigo.toUpperCase().startsWith(prefijoNorm));
+  }, [productos, prefijoNorm]);
+
+  // Agrega de una vez todos los productos del prefijo (1 etiqueta c/u).
+  function agregarPrefijo() {
+    if (coincidenPrefijo.length === 0) return;
+    setSel((s) => {
+      const c = { ...s };
+      for (const p of coincidenPrefijo) if (!c[p.codigo]) c[p.codigo] = 1;
+      return c;
+    });
+    setPrefijo("");
   }
 
   const seleccionados = Object.keys(sel);
@@ -96,6 +115,38 @@ export function EtiquetasScreen() {
             placeholder={cargando ? "Cargando catálogo…" : "Buscar por código o descripción…"}
             className="w-full border rounded-lg pl-9 pr-3 py-2"
           />
+        </div>
+
+        {/* Agregar todos los de una inicial (prefijo de código) */}
+        <div className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 p-3">
+          <div className="text-sm font-semibold text-slate-700 mb-2 flex items-center gap-1.5">
+            <Layers size={16} className="text-cyan-600" /> Agregar todos de una inicial (ej: ACAI,
+            AMON)
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={prefijo}
+              onChange={(e) => setPrefijo(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === "Enter" && agregarPrefijo()}
+              placeholder="Ej: ACAI"
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              className="flex-1 min-w-[140px] border rounded-lg px-3 py-2 font-mono uppercase"
+            />
+            <button
+              onClick={agregarPrefijo}
+              disabled={coincidenPrefijo.length === 0}
+              className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-4 py-2 disabled:opacity-50 shrink-0"
+            >
+              <Plus size={18} /> Agregar todos ({coincidenPrefijo.length})
+            </button>
+          </div>
+          {prefijoNorm && (
+            <p className="text-xs text-slate-500 mt-1.5">
+              {coincidenPrefijo.length} producto(s) empiezan con “{prefijoNorm}”.
+            </p>
+          )}
         </div>
 
         {resultados.length > 0 && (

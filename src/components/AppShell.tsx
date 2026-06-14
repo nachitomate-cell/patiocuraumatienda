@@ -10,6 +10,7 @@ import {
   Barcode,
   History,
   Notebook,
+  Store,
   Settings,
   LogOut,
   ZoomIn,
@@ -24,6 +25,7 @@ const NAV = [
   { href: "/stock", label: "Stock", Icon: Boxes },
   { href: "/etiquetas", label: "Etiquetas", Icon: Barcode },
   { href: "/fiados", label: "Fiados", Icon: Notebook },
+  { href: "/emprendedores", label: "Emprendedores", Icon: Store },
   { href: "/historial", label: "Historial", Icon: History },
   { href: "/admin", label: "Admin", Icon: Settings },
 ];
@@ -102,7 +104,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main
-        className={`flex-1 mx-auto w-full max-w-6xl px-4 py-6 ${
+        className={`flex-1 mx-auto w-full max-w-[1600px] px-2 sm:px-4 py-6 ${
           mode === "grande" ? "modo-grande" : ""
         }`}
       >

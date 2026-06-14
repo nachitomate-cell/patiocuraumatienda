@@ -14,6 +14,8 @@ import {
   X,
   Download,
   Info,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { todosLosProductos, ajustarProducto } from "@/lib/repo";
@@ -30,6 +32,8 @@ export function StockScreen() {
   const [filtro, setFiltro] = useState<Filtro>("todos");
   const [umbral, setUmbral] = useState(5);
   const [verResumen, setVerResumen] = useState(false);
+  const [pagina, setPagina] = useState(1);
+  const PAGE = 50;
 
   // Edición inline
   const [editando, setEditando] = useState<string | null>(null);
@@ -37,11 +41,11 @@ export function StockScreen() {
   const [edPrecio, setEdPrecio] = useState(0);
   const [edBarcode, setEdBarcode] = useState("");
 
-  async function cargar() {
+  async function cargar(force = false) {
     setCargando(true);
     setError("");
     try {
-      setProductos(await todosLosProductos());
+      setProductos(await todosLosProductos(force));
     } catch {
       setError("No se pudo cargar el inventario. Revise conexión o que ya importó el catálogo.");
     } finally {
@@ -52,6 +56,11 @@ export function StockScreen() {
   useEffect(() => {
     cargar();
   }, []);
+
+  // Al cambiar la búsqueda o el filtro, volver a la primera página.
+  useEffect(() => {
+    setPagina(1);
+  }, [term, filtro, umbral]);
 
   const kpis = useMemo(() => {
     let unidades = 0,
@@ -88,7 +97,9 @@ export function StockScreen() {
     });
   }, [productos, term, filtro, umbral]);
 
-  const visibles = filtrados.slice(0, 300);
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const visibles = filtrados.slice((paginaSegura - 1) * PAGE, paginaSegura * PAGE);
 
   function iniciarEdicion(p: Producto) {
     setEditando(p.codigo);
@@ -178,9 +189,9 @@ export function StockScreen() {
               <Download size={16} /> Exportar
             </button>
             <button
-              onClick={cargar}
+              onClick={() => cargar(true)}
               className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm"
-              title="Recargar inventario"
+              title="Recargar inventario desde la base de datos"
             >
               <RefreshCw size={16} /> Refrescar
             </button>
@@ -341,10 +352,34 @@ export function StockScreen() {
             })}
           </tbody>
         </table>
-        {!cargando && filtrados.length > visibles.length && (
-          <div className="px-3 py-2 text-center text-xs text-slate-400 border-t">
-            Mostrando {visibles.length} de {filtrados.length.toLocaleString("es-CL")} — afine la
-            búsqueda para ver el resto.
+        {!cargando && !error && filtrados.length > 0 && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 border-t flex-wrap">
+            <span className="text-xs text-slate-500">
+              {((paginaSegura - 1) * PAGE + 1).toLocaleString("es-CL")}–
+              {Math.min(paginaSegura * PAGE, filtrados.length).toLocaleString("es-CL")} de{" "}
+              {filtrados.length.toLocaleString("es-CL")}
+            </span>
+            {totalPaginas > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                  disabled={paginaSegura <= 1}
+                  className="flex items-center gap-1 border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-semibold hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <ChevronLeft size={16} /> Anterior
+                </button>
+                <span className="text-sm text-slate-600 px-2 whitespace-nowrap">
+                  Página {paginaSegura} de {totalPaginas}
+                </span>
+                <button
+                  onClick={() => setPagina((p) => Math.min(totalPaginas, p + 1))}
+                  disabled={paginaSegura >= totalPaginas}
+                  className="flex items-center gap-1 border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-semibold hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  Siguiente <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
