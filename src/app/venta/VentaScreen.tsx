@@ -262,6 +262,11 @@ export function VentaScreen() {
     setItems((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  // Edita una línea del carrito directamente (cantidad, precio o descuento).
+  function editarLinea(i: number, cambios: Partial<LineaVenta>) {
+    setItems((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...cambios } : l)));
+  }
+
   async function confirmar() {
     if (items.length === 0) return setMsg("No hay productos en el carrito.");
     if (medioPago === "fiado" && !clienteId)
@@ -681,9 +686,51 @@ export function VentaScreen() {
                     )}
                   </td>
                   <td className="px-3 py-2">{l.descripcion}</td>
-                  <td className="px-3 py-2 text-right">{l.cantidad}</td>
-                  <td className="px-3 py-2 text-right">{money(l.precio)}</td>
-                  <td className="px-3 py-2 text-right">{l.descuento}%</td>
+                  <td className="px-2 py-1.5 text-right">
+                    <input
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={l.cantidad}
+                      onChange={(e) =>
+                        editarLinea(i, { cantidad: Math.max(1, Number(e.target.value) || 1) })
+                      }
+                      className="w-16 border rounded-lg px-2 py-1 text-right"
+                      aria-label="Cantidad"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    <input
+                      type="number"
+                      min={0}
+                      inputMode="numeric"
+                      value={l.precio}
+                      onChange={(e) =>
+                        editarLinea(i, { precio: Math.max(0, Number(e.target.value) || 0) })
+                      }
+                      className="w-24 border rounded-lg px-2 py-1 text-right"
+                      aria-label="Precio"
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    <div className="flex items-center justify-end gap-0.5">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        inputMode="numeric"
+                        value={l.descuento}
+                        onChange={(e) =>
+                          editarLinea(i, {
+                            descuento: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                          })
+                        }
+                        className="w-14 border rounded-lg px-2 py-1 text-right"
+                        aria-label="Descuento %"
+                      />
+                      <span className="text-slate-400 text-xs">%</span>
+                    </div>
+                  </td>
                   <td className="px-3 py-2 text-right font-semibold">
                     {money(subtotalLinea(l))}
                   </td>
