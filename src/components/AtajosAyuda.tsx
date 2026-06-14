@@ -41,7 +41,7 @@ export const GRUPOS_ATAJOS: Grupo[] = [
     titulo: "Venta",
     atajos: [
       { teclas: ["Alt", "B"], desc: "Buscar producto" },
-      { teclas: ["Enter"], desc: "Agregar (en modo escáner)" },
+      { teclas: ["Enter"], desc: "Agregar el primer resultado de la búsqueda" },
       { teclas: ["Alt", "S"], desc: "Modo escáner on/off" },
       { teclas: ["Alt", "E"], desc: "Pago: Efectivo" },
       { teclas: ["Alt", "D"], desc: "Pago: Débito" },

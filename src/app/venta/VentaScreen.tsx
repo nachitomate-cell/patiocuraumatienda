@@ -151,11 +151,12 @@ export function VentaScreen() {
 
   // Agregado rápido: suma 1 al carrito SIN cerrar la lista, para ir
   // agregando varios productos seguidos sin volver a buscar.
-  function agregarRapido(p: Producto) {
+  // Devuelve true si lo agregó (false si no había stock).
+  function agregarRapido(p: Producto): boolean {
     const yaEnCarrito = enCarritoPorCodigo.get(p.codigo) ?? 0;
     if (yaEnCarrito + 1 > p.stockActual) {
       setMsg(`Stock insuficiente: quedan ${p.stockActual} de ${p.descripcion}.`);
-      return;
+      return false;
     }
     setMsg("");
     agregarLinea({
@@ -165,6 +166,7 @@ export function VentaScreen() {
       cantidad: 1,
       descuento: 0,
     });
+    return true;
   }
 
   // Abre el formulario de producto manual (no está en el catálogo o la
@@ -476,7 +478,14 @@ export function VentaScreen() {
                     value={term}
                     onChange={(e) => setTerm(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && modoEscaner) agregarPorCodigo(term);
+                      if (e.key !== "Enter") return;
+                      // Escáner: agrega por código exacto. Búsqueda normal:
+                      // Enter agrega el primer resultado y limpia para el siguiente.
+                      if (modoEscaner) {
+                        agregarPorCodigo(term);
+                      } else if (resultados.length > 0) {
+                        if (agregarRapido(resultados[0])) setTerm("");
+                      }
                     }}
                     placeholder={modoEscaner ? "Escanee el producto…" : "Ej: coca, pan, arroz…"}
                     autoCapitalize="off"
