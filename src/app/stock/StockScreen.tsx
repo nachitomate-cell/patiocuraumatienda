@@ -16,12 +16,23 @@ import {
   Info,
   ChevronLeft,
   ChevronRight,
+  Wand2,
+  AlertCircle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { todosLosProductos, ajustarProducto } from "@/lib/repo";
+import {
+  todosLosProductos,
+  ajustarProducto,
+  renombrarProducto,
+  planearNormalizacion,
+  aplicarRenombrados,
+  type CambioCodigo,
+  type ConflictoCodigo,
+} from "@/lib/repo";
 import type { Producto } from "@/lib/types";
 import { money } from "@/lib/format";
 import { useAtajos } from "@/lib/useAtajos";
+import { Modal } from "@/components/Modal";
 
 type Filtro = "todos" | "con" | "bajo" | "sin";
 
@@ -39,9 +50,20 @@ export function StockScreen() {
 
   // Edición inline
   const [editando, setEditando] = useState<string | null>(null);
+  const [edCodigo, setEdCodigo] = useState("");
   const [edStock, setEdStock] = useState(0);
   const [edPrecio, setEdPrecio] = useState(0);
   const [edBarcode, setEdBarcode] = useState("");
+  const [errorEdicion, setErrorEdicion] = useState("");
+
+  // Unificación masiva de códigos
+  const [plan, setPlan] = useState<{
+    cambios: CambioCodigo[];
+    conflictos: ConflictoCodigo[];
+    sinCambio: number;
+  } | null>(null);
+  const [aplicando, setAplicando] = useState(false);
+  const [progreso, setProgreso] = useState(0);
 
   async function cargar(force = false) {
     setCargando(true);
@@ -105,18 +127,53 @@ export function StockScreen() {
 
   function iniciarEdicion(p: Producto) {
     setEditando(p.codigo);
+    setEdCodigo(p.codigo);
     setEdStock(p.stockActual || 0);
     setEdPrecio(p.precio || 0);
     setEdBarcode(p.barcode ?? "");
+    setErrorEdicion("");
   }
 
   async function guardarEdicion(p: Producto) {
     const cambios = { stockActual: edStock, precio: edPrecio, barcode: edBarcode.trim() };
-    await ajustarProducto(p.codigo, cambios);
+    const nuevoCodigo = edCodigo.trim();
+    try {
+      await ajustarProducto(p.codigo, cambios);
+      // Si cambió el código, renombrar el documento (crear nuevo + borrar viejo).
+      if (nuevoCodigo && nuevoCodigo !== p.codigo) {
+        await renombrarProducto(p.codigo, nuevoCodigo);
+      }
+    } catch (e) {
+      setErrorEdicion(e instanceof Error ? e.message : "No se pudo guardar el cambio.");
+      return;
+    }
     setProductos((prev) =>
-      prev.map((x) => (x.codigo === p.codigo ? { ...x, ...cambios } : x))
+      prev.map((x) =>
+        x.codigo === p.codigo ? { ...x, ...cambios, codigo: nuevoCodigo || x.codigo } : x
+      )
     );
     setEditando(null);
+  }
+
+  // Abre la vista previa de unificación calculada sobre el catálogo cargado.
+  function abrirUnificar() {
+    setProgreso(0);
+    setPlan(planearNormalizacion(productos));
+  }
+
+  async function aplicarUnificacion() {
+    if (!plan || plan.cambios.length === 0) return;
+    setAplicando(true);
+    try {
+      await aplicarRenombrados(productos, plan.cambios, (hechos) => setProgreso(hechos));
+      setPlan(null);
+      await cargar(true);
+    } catch {
+      setErrorEdicion("No se pudo completar la unificación. Reintente; los cambios ya aplicados se conservan.");
+      setPlan(null);
+    } finally {
+      setAplicando(false);
+    }
   }
 
   function exportar() {
@@ -191,6 +248,14 @@ export function StockScreen() {
                 className="w-16 border rounded-lg px-2 py-1"
               />
             </label>
+            <button
+              onClick={abrirUnificar}
+              disabled={cargando || productos.length === 0}
+              title="Revisar y unificar el formato de los códigos (PREFIJO-NNNN)"
+              className="flex items-center gap-1.5 border border-violet-300 text-violet-700 hover:bg-violet-50 font-semibold rounded-lg px-3 py-2 text-sm disabled:opacity-40"
+            >
+              <Wand2 size={16} /> Unificar códigos
+            </button>
             <button
               onClick={exportar}
               className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-3 py-2 text-sm"
@@ -277,7 +342,17 @@ export function StockScreen() {
               const editar = editando === p.codigo;
               return (
                 <tr key={p.codigo} className="border-t">
-                  <td className="px-3 py-2 font-mono">{p.codigo}</td>
+                  <td className="px-3 py-2 font-mono">
+                    {editar ? (
+                      <input
+                        value={edCodigo}
+                        onChange={(e) => setEdCodigo(e.target.value)}
+                        className="w-28 border rounded px-2 py-1 font-mono uppercase"
+                      />
+                    ) : (
+                      p.codigo
+                    )}
+                  </td>
                   <td className="px-3 py-2">{p.descripcion}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-500">
                     {editar ? (
@@ -393,6 +468,123 @@ export function StockScreen() {
           </div>
         )}
       </div>
+
+      {/* Modal: vista previa de unificación de códigos */}
+      <Modal
+        abierto={plan !== null}
+        onCerrar={() => !aplicando && setPlan(null)}
+        titulo="Unificar códigos"
+        maxW="max-w-2xl"
+      >
+        {plan && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-lg bg-violet-50 border border-violet-200 p-3">
+                <div className="text-2xl font-bold text-violet-700">{plan.cambios.length}</div>
+                <div className="text-xs text-slate-600">por corregir</div>
+              </div>
+              <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
+                <div className="text-2xl font-bold text-slate-700">{plan.sinCambio}</div>
+                <div className="text-xs text-slate-600">ya están bien</div>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <div className="text-2xl font-bold text-amber-700">{plan.conflictos.length}</div>
+                <div className="text-xs text-slate-600">con conflicto</div>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600">
+              Se pasan al formato <span className="font-mono font-semibold">PREFIJO-NNNN</span>.
+              Los códigos descriptivos o con sufijo (ej. <span className="font-mono">DIST BAMBU</span>,{" "}
+              <span className="font-mono">VH0091CO</span>) no se tocan.
+            </p>
+
+            {plan.cambios.length > 0 && (
+              <div>
+                <div className="text-sm font-semibold text-slate-700 mb-1">Cambios a aplicar</div>
+                <div className="max-h-52 overflow-auto rounded-lg border border-slate-200 divide-y text-sm">
+                  {plan.cambios.slice(0, 200).map((c) => (
+                    <div key={c.de} className="flex items-center gap-2 px-3 py-1.5 font-mono">
+                      <span className="text-slate-400 line-through">{c.de}</span>
+                      <span className="text-slate-400">→</span>
+                      <span className="text-violet-700 font-semibold">{c.a}</span>
+                    </div>
+                  ))}
+                  {plan.cambios.length > 200 && (
+                    <div className="px-3 py-1.5 text-xs text-slate-500">
+                      …y {plan.cambios.length - 200} más
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {plan.conflictos.length > 0 && (
+              <div>
+                <div className="text-sm font-semibold text-amber-700 mb-1 flex items-center gap-1">
+                  <AlertCircle size={15} /> No se cambiarán (conflicto)
+                </div>
+                <div className="max-h-40 overflow-auto rounded-lg border border-amber-200 divide-y text-sm">
+                  {plan.conflictos.map((c) => (
+                    <div key={c.de} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                      <span className="font-mono">
+                        {c.de} <span className="text-slate-400">→</span> {c.a}
+                      </span>
+                      <span className="text-xs text-amber-700">{c.motivo}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Resolvé los conflictos editando esos códigos a mano antes de reintentar.
+                </p>
+              </div>
+            )}
+
+            {aplicando && (
+              <div className="text-sm text-slate-600">
+                Aplicando… {progreso} de {plan.cambios.length}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setPlan(null)}
+                disabled={aplicando}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100 disabled:opacity-40"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={aplicarUnificacion}
+                disabled={aplicando || plan.cambios.length === 0}
+                className="rounded-lg bg-violet-600 hover:bg-violet-700 text-white px-4 py-2 text-sm font-semibold disabled:opacity-40"
+              >
+                {aplicando
+                  ? "Aplicando…"
+                  : `Corregir ${plan.cambios.length} código${plan.cambios.length === 1 ? "" : "s"}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal: error al guardar/renombrar */}
+      <Modal abierto={!!errorEdicion} onCerrar={() => setErrorEdicion("")} titulo="No se pudo guardar">
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700 flex items-start gap-2">
+            <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
+            {errorEdicion}
+          </p>
+          <div className="flex justify-end">
+            <button
+              onClick={() => setErrorEdicion("")}
+              className="rounded-lg bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 text-sm font-semibold"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

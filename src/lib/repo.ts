@@ -145,6 +145,120 @@ export async function ajustarProducto(
   parchearProducto(codigo, cambios);
 }
 
+// ===== Códigos: normalización y renombrado =====
+// Formato canónico: PREFIJO-NNNN (letras en MAYÚSCULA, guion, número con al
+// menos 4 dígitos). Unifica los que claramente son "letras + número" aunque
+// vengan sin guion, con espacios o en minúsculas (ALFO0050, "AMO -0001",
+// "JO  0081", Herb-0001 → ALFO-0050, AMO-0001, JO-0081, HERB-0001). Los que no
+// encajan en ese patrón (descriptivos o con sufijo: "DIST BAMBU", VH0091CO,
+// "PR J-0001") se devuelven solo en mayúsculas/sin espacios extra, sin forzar
+// el formato.
+export function normalizarCodigo(codigo: string): string {
+  const limpio = (codigo || "").trim().toUpperCase().replace(/\s+/g, " ");
+  const m = limpio.match(/^([A-Z]+)[\s-]*(\d+)$/);
+  if (m) {
+    const [, prefijo, numero] = m;
+    return `${prefijo}-${numero.padStart(4, "0")}`;
+  }
+  return limpio;
+}
+
+// Renombra un producto = cambia el id de su documento (Firestore no permite
+// renombrar in situ: hay que crear el nuevo y borrar el viejo). Atómico, y
+// valida que el destino no esté ocupado. No actualiza referencias históricas
+// (ventas/entradas guardan el código como etiqueta, no como vínculo).
+export async function renombrarProducto(viejo: string, nuevo: string): Promise<void> {
+  const db = getDb();
+  const codViejo = viejo.trim();
+  const codNuevo = nuevo.trim();
+  if (!codNuevo) throw new Error("El código no puede quedar vacío.");
+  if (codNuevo === codViejo) return;
+  const refViejo = doc(db, PRODUCTOS, codViejo);
+  const refNuevo = doc(db, PRODUCTOS, codNuevo);
+  await runTransaction(db, async (tx) => {
+    const snapViejo = await tx.get(refViejo);
+    if (!snapViejo.exists()) throw new Error(`El producto ${codViejo} no existe.`);
+    const snapNuevo = await tx.get(refNuevo);
+    if (snapNuevo.exists()) {
+      throw new Error(`Ya existe un producto con el código ${codNuevo}.`);
+    }
+    tx.set(refNuevo, { ...(snapViejo.data() as Producto), codigo: codNuevo });
+    tx.delete(refViejo);
+  });
+  invalidarCatalogo();
+}
+
+export interface CambioCodigo {
+  de: string;
+  a: string;
+}
+export interface ConflictoCodigo extends CambioCodigo {
+  motivo: string;
+}
+
+// Calcula el plan de unificación sobre el catálogo dado: qué códigos cambian,
+// cuáles chocan (destino ocupado o dos códigos que quedarían iguales) y cuántos
+// ya están bien. No escribe nada; solo arma la vista previa.
+export function planearNormalizacion(productos: Producto[]): {
+  cambios: CambioCodigo[];
+  conflictos: ConflictoCodigo[];
+  sinCambio: number;
+} {
+  const existentes = new Set(productos.map((p) => p.codigo));
+  const candidatos: CambioCodigo[] = [];
+  let sinCambio = 0;
+  for (const p of productos) {
+    const a = normalizarCodigo(p.codigo);
+    if (a === p.codigo) sinCambio++;
+    else candidatos.push({ de: p.codigo, a });
+  }
+
+  const conteoDestino = new Map<string, number>();
+  for (const c of candidatos) conteoDestino.set(c.a, (conteoDestino.get(c.a) ?? 0) + 1);
+  const renombrados = new Set(candidatos.map((c) => c.de));
+
+  const cambios: CambioCodigo[] = [];
+  const conflictos: ConflictoCodigo[] = [];
+  for (const c of candidatos) {
+    if ((conteoDestino.get(c.a) ?? 0) > 1) {
+      conflictos.push({ ...c, motivo: "Otro código quedaría igual" });
+    } else if (existentes.has(c.a) && !renombrados.has(c.a)) {
+      conflictos.push({ ...c, motivo: `Ya existe ${c.a}` });
+    } else {
+      cambios.push(c);
+    }
+  }
+  return { cambios, conflictos, sinCambio };
+}
+
+// Aplica un lote de renombrados en bloques (cada renombrado = set + delete = 2
+// ops; tope de 500 ops por batch). Usa los datos ya cargados del catálogo para
+// no releer la colección.
+export async function aplicarRenombrados(
+  productos: Producto[],
+  cambios: CambioCodigo[],
+  onProgress?: (hechos: number, total: number) => void
+): Promise<number> {
+  const db = getDb();
+  const mapa = new Map(productos.map((p) => [p.codigo, p]));
+  const CHUNK = 200;
+  let hechos = 0;
+  for (let i = 0; i < cambios.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    for (const c of cambios.slice(i, i + CHUNK)) {
+      const data = mapa.get(c.de);
+      if (!data) continue;
+      batch.set(doc(db, PRODUCTOS, c.a), { ...data, codigo: c.a });
+      batch.delete(doc(db, PRODUCTOS, c.de));
+    }
+    await batch.commit();
+    hechos = Math.min(i + CHUNK, cambios.length);
+    onProgress?.(hechos, cambios.length);
+  }
+  invalidarCatalogo();
+  return hechos;
+}
+
 // Carga inicial del catalogo desde el Excel exportado. Escribe por lotes
 // (max 500 ops por batch en Firestore).
 export async function importarCatalogo(
