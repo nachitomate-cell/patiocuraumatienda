@@ -9,10 +9,13 @@ import {
   type User,
 } from "firebase/auth";
 import { getAuthInstance, isFirebaseConfigured } from "./firebase";
-import { LOGIN_HABILITADO } from "./config";
+import { setNegocioActivo, subdominioDeNegocio } from "./tenant";
+import { getUsuario, type Usuario } from "./admin";
 
 interface AuthCtx {
   user: User | null;
+  // Perfil del usuario (rol + negocio). null si es anónimo o no tiene perfil.
+  usuario: Usuario | null;
   loading: boolean;
   configured: boolean;
   login: (email: string, pass: string) => Promise<void>;
@@ -23,27 +26,45 @@ const Ctx = createContext<AuthCtx | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Resuelve el negocio activo desde el subdominio antes de tocar Firestore.
+    // (El login confirmará luego que el usuario pertenece a este negocio.)
+    setNegocioActivo(subdominioDeNegocio());
     if (!isFirebaseConfigured) {
       setLoading(false);
       return;
     }
-    return onAuthStateChanged(getAuthInstance(), (u) => {
-      // Modo presentación: si no hay login y no hay usuario, entra anónimo
-      // para que Firestore siga funcionando sin pantalla de inicio de sesión.
-      if (!u && !LOGIN_HABILITADO) {
+    return onAuthStateChanged(getAuthInstance(), async (u) => {
+      // Sin usuario: entra anónimo para que las páginas públicas (/alta)
+      // tengan un token válido de Firestore. onAuthStateChanged se re-dispara.
+      if (!u) {
         signInAnonymously(getAuthInstance()).catch(() => setLoading(false));
         return;
       }
       setUser(u);
-      setLoading(false);
+      // Los anónimos no tienen perfil; el AuthGate del POS los tratará como
+      // "sin sesión" y mostrará el login.
+      if (u.isAnonymous) {
+        setUsuario(null);
+        setLoading(false);
+        return;
+      }
+      try {
+        setUsuario(await getUsuario(u.uid));
+      } catch {
+        setUsuario(null);
+      } finally {
+        setLoading(false);
+      }
     });
   }, []);
 
   const value: AuthCtx = {
     user,
+    usuario,
     loading,
     configured: isFirebaseConfigured,
     login: async (email, pass) => {

@@ -4,10 +4,10 @@ import { StockScreen } from "./StockScreen";
 
 export default function StockPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <StockScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

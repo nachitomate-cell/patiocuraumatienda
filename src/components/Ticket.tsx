@@ -2,6 +2,7 @@
 
 import { subtotalLinea, type LineaVenta } from "@/lib/types";
 import { money } from "@/lib/format";
+import { useNegocio } from "@/lib/negocio-context";
 
 interface Props {
   nro: string;
@@ -13,6 +14,7 @@ interface Props {
 
 // Boleta termica (80mm). Solo este bloque se imprime (ver globals.css).
 export function Ticket({ nro, fecha, cliente, items, total }: Props) {
+  const NEGOCIO = useNegocio();
   return (
     <div
       id="ticket"
@@ -20,10 +22,10 @@ export function Ticket({ nro, fecha, cliente, items, total }: Props) {
       style={{ width: "80mm", maxWidth: "100%" }}
     >
       <div className="text-center">
-        <div className="font-bold text-sm">🏡 PATIO CURAUMA</div>
-        <div>Productos Naturales y Artesanales</div>
-        <div>📍 Curauma, Valparaíso</div>
-        <div>www.patiocuraumaonline.com</div>
+        <div className="font-bold text-sm">{NEGOCIO.nombre.toUpperCase()}</div>
+        {NEGOCIO.rubro && <div>{NEGOCIO.rubro}</div>}
+        {NEGOCIO.ubicacion && <div>📍 {NEGOCIO.ubicacion}</div>}
+        {NEGOCIO.web && <div>{NEGOCIO.web}</div>}
       </div>
       <div className="my-1">════════════════════════</div>
       <div className="flex justify-between">
@@ -57,16 +59,20 @@ export function Ticket({ nro, fecha, cliente, items, total }: Props) {
       </div>
       <div className="my-1">════════════════════════</div>
       <div className="text-center mt-2">
-        <div>📱 Club de Fidelización</div>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/qr-club.png"
-          alt="QR Club de Fidelización Patio Curauma"
-          className="mx-auto my-2 w-28 h-28"
-        />
-        <div>¡Escanea y acumula puntos!</div>
+        {NEGOCIO.qrClub && (
+          <>
+            <div>📱 Club de Fidelización</div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={NEGOCIO.qrClub}
+              alt={`QR Club de Fidelización ${NEGOCIO.nombre}`}
+              className="mx-auto my-2 w-28 h-28"
+            />
+            <div>¡Escanea y acumula puntos!</div>
+          </>
+        )}
         <div className="mt-2">¡GRACIAS POR SU COMPRA!</div>
-        <div>📷 @patiocurauma</div>
+        {NEGOCIO.instagram && <div>📷 {NEGOCIO.instagram}</div>}
       </div>
     </div>
   );

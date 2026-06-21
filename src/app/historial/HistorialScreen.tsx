@@ -14,8 +14,10 @@ import { ultimasVentas } from "@/lib/repo";
 import { subtotalLinea, type Venta } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
 import { SelectorFecha } from "@/components/SelectorFecha";
+import { useNegocio } from "@/lib/negocio-context";
 
 export function HistorialScreen() {
+  const NEGOCIO = useNegocio();
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -82,7 +84,7 @@ export function HistorialScreen() {
     const ws = XLSX.utils.json_to_sheet(filas);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "SALIDAS");
-    XLSX.writeFile(wb, `ventas_patio_${hoyISO()}.xlsx`);
+    XLSX.writeFile(wb, `ventas_${NEGOCIO.slug}_${hoyISO()}.xlsx`);
   }
 
   return (

@@ -4,10 +4,10 @@ import { FiadosScreen } from "./FiadosScreen";
 
 export default function FiadosPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <FiadosScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

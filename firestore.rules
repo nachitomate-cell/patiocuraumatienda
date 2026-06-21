@@ -1,10 +1,73 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Solo usuarios autenticados pueden leer/escribir.
-    // Sube estas reglas en la consola de Firebase -> Firestore -> Reglas.
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    // Reglas multi-tenant. Súbelas en Firebase Console -> Firestore -> Reglas.
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function perfil() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+    function tienePerfil() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+    function esModerador() {
+      return tienePerfil() && perfil().rol == 'moderador';
+    }
+    function esMiembro(negId) {
+      return tienePerfil() && perfil().negocioId == negId;
+    }
+
+    // ===== Usuarios (global) =====
+    // Cada uno lee su propio perfil; el moderador lee todos. Solo el moderador
+    // crea/edita usuarios (desde el panel /moderador).
+    match /usuarios/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || esModerador());
+      allow list: if esModerador();
+      allow write: if esModerador();
+    }
+
+    // ===== Negocios =====
+    match /negocios/{negId} {
+      // El documento del negocio guarda solo branding (no es secreto): lectura
+      // libre para mostrar la marca antes del login. Escritura solo moderador.
+      allow get: if true;
+      allow list: if esModerador();
+      allow write: if esModerador();
+
+      // --- Emprendedores ---
+      // El id del documento es el token del link de alta. Lectura por id (get)
+      // para cualquiera con sesión: así la página pública /alta resuelve el
+      // token sin poder LISTAR la colección (no se filtran tokens ajenos).
+      match /emprendedores/{empId} {
+        allow get: if esMiembro(negId) || esModerador() || signedIn();
+        allow list: if esMiembro(negId) || esModerador();
+        allow create, delete: if esMiembro(negId) || esModerador();
+        // El alta solo puede tocar el contador de productos del emprendedor.
+        allow update: if esMiembro(negId) || esModerador()
+          || (signedIn()
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['productosCount']));
+      }
+
+      // --- Productos ---
+      // El alta crea productos a nombre de un emprendedor existente. No puede
+      // leer/listar el catálogo (los costos no se exponen).
+      match /productos/{cod} {
+        allow read: if esMiembro(negId) || esModerador();
+        allow update, delete: if esMiembro(negId) || esModerador();
+        allow create: if esMiembro(negId) || esModerador()
+          || (signedIn()
+              && request.resource.data.emprendedorId is string
+              && exists(/databases/$(database)/documents/negocios/$(negId)/emprendedores/$(request.resource.data.emprendedorId)));
+      }
+
+      // --- Resto de datos del negocio (ventas, entradas, clientes, contadores,
+      // config) --- solo miembros del negocio o moderador.
+      match /{coleccion}/{docId=**} {
+        allow read, write: if esMiembro(negId) || esModerador();
+      }
     }
   }
 }

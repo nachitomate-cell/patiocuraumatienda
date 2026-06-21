@@ -23,6 +23,7 @@ import { useAuth } from "@/lib/auth";
 import { useUiMode } from "@/lib/uimode";
 import { useAtajos } from "@/lib/useAtajos";
 import { AtajosAyuda } from "@/components/AtajosAyuda";
+import { useNegocio } from "@/lib/negocio-context";
 
 const NAV = [
   { href: "/venta", label: "Venta", Icon: ShoppingCart },
@@ -41,6 +42,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { user, logout, configured } = useAuth();
   const { mode, toggle } = useUiMode();
+  const NEGOCIO = useNegocio();
   const [ayuda, setAyuda] = useState(false);
 
   // Atajos globales: Alt+1..9 navega a cada sección; "?" abre la ayuda.
@@ -56,18 +58,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="no-print bg-slate-900 text-white shadow-md">
         <div className="mx-auto w-full max-w-[1600px] px-2 sm:px-4 h-14 sm:h-16 flex items-center gap-2">
           <Image
-            src="/logo.png"
-            alt="Patio Curauma"
+            src={NEGOCIO.logo}
+            alt={NEGOCIO.nombre}
             width={40}
             height={52}
             className="h-9 sm:h-11 w-auto shrink-0 drop-shadow-[0_2px_8px_rgba(232,163,61,0.35)]"
             priority
           />
           <span className="hidden lg:flex flex-col leading-none shrink-0">
-            <span className="font-bold tracking-tight text-base">Patio Curauma</span>
-            <span className="text-[10px] uppercase tracking-[0.25em] text-amber-300/80">
-              Premium POS
-            </span>
+            <span className="font-bold tracking-tight text-base">{NEGOCIO.nombre}</span>
+            {NEGOCIO.eslogan && (
+              <span className="text-[10px] uppercase tracking-[0.25em] text-amber-300/80">
+                {NEGOCIO.eslogan}
+              </span>
+            )}
           </span>
           <nav className="flex gap-0.5 flex-1 min-w-0 overflow-x-auto no-scrollbar">
             {NAV.map(({ href, label, Icon }) => {

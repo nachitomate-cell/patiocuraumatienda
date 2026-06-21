@@ -13,10 +13,12 @@ const sora = Sora({
 import { UiModeProvider } from "@/lib/uimode";
 import { RegisterSW } from "@/components/RegisterSW";
 import { ConexionBanner } from "@/components/ConexionBanner";
+import { NEGOCIO } from "@/lib/negocio";
+import { NegocioProvider } from "@/lib/negocio-context";
 
 export const metadata: Metadata = {
-  title: "Patio Curauma POS",
-  description: "Punto de venta e inventario - Patio Curauma",
+  title: `${NEGOCIO.nombre} POS`,
+  description: `Punto de venta e inventario - ${NEGOCIO.nombre}`,
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg" },
 };
@@ -32,7 +34,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es" className={`${inter.variable} ${sora.variable}`}>
       <body className="min-h-screen">
         <AuthProvider>
-          <UiModeProvider>{children}</UiModeProvider>
+          <NegocioProvider>
+            <UiModeProvider>{children}</UiModeProvider>
+          </NegocioProvider>
         </AuthProvider>
         <ConexionBanner />
         <RegisterSW />

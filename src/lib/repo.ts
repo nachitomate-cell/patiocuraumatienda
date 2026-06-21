@@ -16,6 +16,7 @@ import {
   documentId,
 } from "firebase/firestore";
 import { getDb } from "./firebase";
+import { getNegocioId, onCambioNegocio } from "./tenant";
 import {
   subtotalLinea,
   type Cliente,
@@ -28,6 +29,7 @@ import {
   type Venta,
 } from "./types";
 
+const NEGOCIOS = "negocios";
 const PRODUCTOS = "productos";
 const VENTAS = "ventas";
 const ENTRADAS = "entradas";
@@ -35,6 +37,17 @@ const CLIENTES = "clientes";
 const EMPRENDEDORES = "emprendedores";
 const CONTADORES = "contadores";
 const CONFIG = "config";
+
+// ===== Helpers de tenant =====
+// Todas las colecciones del negocio cuelgan de negocios/{negocioId}/... Estos
+// dos helpers anteponen ese prefijo, de modo que el resto del archivo trabaja
+// con rutas relativas al negocio activo (PRODUCTOS, VENTAS, etc.).
+function tcol(...segs: string[]) {
+  return collection(getDb(), NEGOCIOS, getNegocioId(), ...segs);
+}
+function tdoc(...segs: string[]) {
+  return doc(getDb(), NEGOCIOS, getNegocioId(), ...segs);
+}
 
 function hoy(): string {
   return new Date().toISOString().slice(0, 10);
@@ -47,6 +60,12 @@ function hoy(): string {
 // abono) o lo invalidan (importación, entradas, alta) para no desincronizar.
 let _catalogo: Producto[] | null = null;
 let _clientes: Cliente[] | null = null;
+
+// Al cambiar de negocio, el cache deja de ser válido: se descarta.
+onCambioNegocio(() => {
+  _catalogo = null;
+  _clientes = null;
+});
 
 function invalidarCatalogo(): void {
   _catalogo = null;
@@ -87,7 +106,7 @@ function aplicarVentaACache(items: LineaVenta[]): void {
 }
 
 export async function getProducto(codigo: string): Promise<Producto | null> {
-  const ref = doc(getDb(), PRODUCTOS, codigo.trim());
+  const ref = tdoc(PRODUCTOS, codigo.trim());
   const snap = await getDoc(ref);
   return snap.exists() ? (snap.data() as Producto) : null;
 }
@@ -104,7 +123,7 @@ export async function buscarParaVenta(valor: string): Promise<Producto | null> {
   }
   const directo = await getProducto(v);
   if (directo) return directo;
-  const q = query(collection(getDb(), PRODUCTOS), where("barcode", "==", v), limit(1));
+  const q = query(tcol(PRODUCTOS), where("barcode", "==", v), limit(1));
   const snap = await getDocs(q);
   return snap.empty ? null : (snap.docs[0].data() as Producto);
 }
@@ -116,7 +135,7 @@ export async function buscarProductos(term: string, max = 30): Promise<Producto[
   if (!t) return [];
   const hi = t + String.fromCharCode(0xf8ff);
   const q = query(
-    collection(getDb(), PRODUCTOS),
+    tcol(PRODUCTOS),
     where(documentId(), ">=", t),
     where(documentId(), "<=", hi),
     orderBy(documentId()),
@@ -131,7 +150,7 @@ export async function buscarProductos(term: string, max = 30): Promise<Producto[
 // entre pantallas sin volver a leer. `force` fuerza una relectura (Refrescar).
 export async function todosLosProductos(force = false): Promise<Producto[]> {
   if (_catalogo && !force) return _catalogo;
-  const snap = await getDocs(collection(getDb(), PRODUCTOS));
+  const snap = await getDocs(tcol(PRODUCTOS));
   _catalogo = snap.docs.map((d) => d.data() as Producto);
   return _catalogo;
 }
@@ -141,7 +160,7 @@ export async function ajustarProducto(
   codigo: string,
   cambios: Partial<Producto>
 ): Promise<void> {
-  await setDoc(doc(getDb(), PRODUCTOS, codigo.trim()), cambios, { merge: true });
+  await setDoc(tdoc(PRODUCTOS, codigo.trim()), cambios, { merge: true });
   parchearProducto(codigo, cambios);
 }
 
@@ -173,8 +192,8 @@ export async function renombrarProducto(viejo: string, nuevo: string): Promise<v
   const codNuevo = nuevo.trim();
   if (!codNuevo) throw new Error("El código no puede quedar vacío.");
   if (codNuevo === codViejo) return;
-  const refViejo = doc(db, PRODUCTOS, codViejo);
-  const refNuevo = doc(db, PRODUCTOS, codNuevo);
+  const refViejo = tdoc(PRODUCTOS, codViejo);
+  const refNuevo = tdoc(PRODUCTOS, codNuevo);
   await runTransaction(db, async (tx) => {
     const snapViejo = await tx.get(refViejo);
     if (!snapViejo.exists()) throw new Error(`El producto ${codViejo} no existe.`);
@@ -248,8 +267,8 @@ export async function aplicarRenombrados(
     for (const c of cambios.slice(i, i + CHUNK)) {
       const data = mapa.get(c.de);
       if (!data) continue;
-      batch.set(doc(db, PRODUCTOS, c.a), { ...data, codigo: c.a });
-      batch.delete(doc(db, PRODUCTOS, c.de));
+      batch.set(tdoc(PRODUCTOS, c.a), { ...data, codigo: c.a });
+      batch.delete(tdoc(PRODUCTOS, c.de));
     }
     await batch.commit();
     hechos = Math.min(i + CHUNK, cambios.length);
@@ -271,7 +290,7 @@ export async function importarCatalogo(
   for (let i = 0; i < productos.length; i += CHUNK) {
     const batch = writeBatch(db);
     for (const p of productos.slice(i, i + CHUNK)) {
-      batch.set(doc(db, PRODUCTOS, p.codigo), p, { merge: true });
+      batch.set(tdoc(PRODUCTOS, p.codigo), p, { merge: true });
     }
     await batch.commit();
     hechos = Math.min(i + CHUNK, productos.length);
@@ -284,7 +303,7 @@ export async function importarCatalogo(
 // Correlativo NV-### atomico mediante un documento contador.
 export async function siguienteNroVenta(): Promise<string> {
   const db = getDb();
-  const ref = doc(db, CONTADORES, "ventas");
+  const ref = tdoc(CONTADORES, "ventas");
   const n = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const actual = snap.exists() ? (snap.data().ultimo as number) : 0;
@@ -303,7 +322,7 @@ export async function confirmarVenta(
   const batch = writeBatch(db);
   const total = venta.items.reduce((s, l) => s + subtotalLinea(l), 0);
 
-  batch.set(doc(db, VENTAS, venta.nro), {
+  batch.set(tdoc(VENTAS, venta.nro), {
     ...venta,
     total,
     creadoEn: Date.now(),
@@ -313,14 +332,14 @@ export async function confirmarVenta(
     // Los productos manuales (fuera de catálogo) no existen como documento,
     // así que no se les descuenta stock: actualizarlos rompería el lote.
     if (l.manual || !l.codigo) continue;
-    batch.update(doc(db, PRODUCTOS, l.codigo), {
+    batch.update(tdoc(PRODUCTOS, l.codigo), {
       stockActual: increment(-l.cantidad),
     });
   }
 
   // Si la venta es a fiado, carga la deuda al cliente en el mismo lote.
   if (venta.medioPago === "fiado" && venta.clienteId) {
-    batch.set(doc(collection(db, CLIENTES, venta.clienteId, "movimientos")), {
+    batch.set(doc(tcol(CLIENTES, venta.clienteId, "movimientos")), {
       tipo: "cargo",
       monto: total,
       fecha: venta.fecha,
@@ -328,7 +347,7 @@ export async function confirmarVenta(
       nota: "Venta a fiado",
       creadoEn: Date.now(),
     });
-    batch.update(doc(db, CLIENTES, venta.clienteId), {
+    batch.update(tdoc(CLIENTES, venta.clienteId), {
       saldo: increment(total),
     });
   }
@@ -343,7 +362,7 @@ export async function confirmarVenta(
 
 export async function listarClientes(force = false): Promise<Cliente[]> {
   if (_clientes && !force) return _clientes;
-  const snap = await getDocs(collection(getDb(), CLIENTES));
+  const snap = await getDocs(tcol(CLIENTES));
   _clientes = snap.docs
     .map((d) => ({ id: d.id, ...(d.data() as Omit<Cliente, "id">) }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
@@ -351,7 +370,7 @@ export async function listarClientes(force = false): Promise<Cliente[]> {
 }
 
 export async function crearCliente(nombre: string, telefono = ""): Promise<string> {
-  const ref = await addDoc(collection(getDb(), CLIENTES), {
+  const ref = await addDoc(tcol(CLIENTES), {
     nombre: nombre.trim(),
     telefono: telefono.trim(),
     saldo: 0,
@@ -369,14 +388,14 @@ export async function registrarAbono(
 ): Promise<void> {
   const db = getDb();
   const batch = writeBatch(db);
-  batch.set(doc(collection(db, CLIENTES, clienteId, "movimientos")), {
+  batch.set(doc(tcol(CLIENTES, clienteId, "movimientos")), {
     tipo: "abono",
     monto,
     fecha: hoy(),
     nota,
     creadoEn: Date.now(),
   });
-  batch.update(doc(db, CLIENTES, clienteId), { saldo: increment(-monto) });
+  batch.update(tdoc(CLIENTES, clienteId), { saldo: increment(-monto) });
   await batch.commit();
   invalidarClientes();
 }
@@ -386,7 +405,7 @@ export async function movimientosCliente(
   max = 50
 ): Promise<MovimientoFiado[]> {
   const q = query(
-    collection(getDb(), CLIENTES, clienteId, "movimientos"),
+    tcol(CLIENTES, clienteId, "movimientos"),
     orderBy("creadoEn", "desc"),
     limit(max)
   );
@@ -420,7 +439,7 @@ function nuevoToken(): string {
 }
 
 export async function listarEmprendedores(): Promise<Emprendedor[]> {
-  const snap = await getDocs(collection(getDb(), EMPRENDEDORES));
+  const snap = await getDocs(tcol(EMPRENDEDORES));
   return snap.docs
     .map((d) => ({ id: d.id, ...(d.data() as Omit<Emprendedor, "id">) }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
@@ -438,17 +457,21 @@ export async function crearEmprendedor(
   if (usados.includes(pref)) {
     throw new Error(`El prefijo ${pref} ya está en uso por otro emprendedor.`);
   }
+  // El id del documento ES el token: permite que la página pública /alta lo
+  // lea por id (get) sin poder listar la colección, lo que mantiene seguros
+  // los tokens del resto de emprendedores bajo las reglas de Firestore.
+  const token = nuevoToken();
   const datos = {
     nombre: nombre.trim(),
     contacto: contacto.trim(),
     telefono: telefono.trim(),
-    token: nuevoToken(),
+    token,
     prefijo: pref,
     productosCount: 0,
     creadoEn: Date.now(),
   };
-  const ref = await addDoc(collection(getDb(), EMPRENDEDORES), datos);
-  return { id: ref.id, ...datos };
+  await setDoc(tdoc(EMPRENDEDORES, token), datos);
+  return { id: token, ...datos };
 }
 
 // Edita los datos de un emprendedor. Si cambia el prefijo, valida unicidad.
@@ -469,26 +492,21 @@ export async function actualizarEmprendedor(
     }
     datos.prefijo = pref;
   }
-  await setDoc(doc(getDb(), EMPRENDEDORES, id), datos, { merge: true });
+  await setDoc(tdoc(EMPRENDEDORES, id), datos, { merge: true });
 }
 
 // Elimina un emprendedor. Sus productos permanecen en el catálogo.
 export async function eliminarEmprendedor(id: string): Promise<void> {
-  await deleteDoc(doc(getDb(), EMPRENDEDORES, id));
+  await deleteDoc(tdoc(EMPRENDEDORES, id));
 }
 
 export async function getEmprendedorPorToken(
   token: string
 ): Promise<Emprendedor | null> {
-  const q = query(
-    collection(getDb(), EMPRENDEDORES),
-    where("token", "==", token),
-    limit(1)
-  );
-  const snap = await getDocs(q);
-  if (snap.empty) return null;
-  const d = snap.docs[0];
-  return { id: d.id, ...(d.data() as Omit<Emprendedor, "id">) };
+  // El id del documento es el token: lectura directa por id (sin listar).
+  const snap = await getDoc(tdoc(EMPRENDEDORES, token.trim()));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...(snap.data() as Omit<Emprendedor, "id">) };
 }
 
 // El emprendedor agrega un producto: se crea en el stock real con código único.
@@ -497,13 +515,13 @@ export async function agregarProductoEmprendedor(
   datos: { descripcion: string; precio: number; costo?: number; stock?: number }
 ): Promise<string> {
   const db = getDb();
-  const empRef = doc(db, EMPRENDEDORES, emp.id);
+  const empRef = tdoc(EMPRENDEDORES, emp.id);
   const codigo = await runTransaction(db, async (tx) => {
     const s = await tx.get(empRef);
     const n = (s.exists() ? (s.data().productosCount as number) || 0 : 0) + 1;
     const cod = `${emp.prefijo}-${String(n).padStart(4, "0")}`;
     tx.update(empRef, { productosCount: n });
-    tx.set(doc(db, PRODUCTOS, cod), {
+    tx.set(tdoc(PRODUCTOS, cod), {
       codigo: cod,
       descripcion: datos.descripcion.trim(),
       precio: datos.precio,
@@ -520,17 +538,13 @@ export async function agregarProductoEmprendedor(
 }
 
 export async function productosDeEmprendedor(empId: string): Promise<Producto[]> {
-  const q = query(collection(getDb(), PRODUCTOS), where("emprendedorId", "==", empId));
+  const q = query(tcol(PRODUCTOS), where("emprendedorId", "==", empId));
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data() as Producto);
 }
 
 export async function ultimasVentas(max = 20): Promise<Venta[]> {
-  const q = query(
-    collection(getDb(), VENTAS),
-    orderBy("creadoEn", "desc"),
-    limit(max)
-  );
+  const q = query(tcol(VENTAS), orderBy("creadoEn", "desc"), limit(max));
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data() as Venta);
 }
@@ -539,7 +553,7 @@ export async function ultimasVentas(max = 20): Promise<Venta[]> {
 // Rango + orden sobre el mismo campo no requiere índice compuesto.
 export async function ventasEnRango(desde: number, hasta: number): Promise<Venta[]> {
   const q = query(
-    collection(getDb(), VENTAS),
+    tcol(VENTAS),
     where("creadoEn", ">=", desde),
     where("creadoEn", "<=", hasta),
     orderBy("creadoEn", "asc")
@@ -553,13 +567,13 @@ export async function ventasEnRango(desde: number, hasta: number): Promise<Venta
 // periodo (semana, mes, etc.). Documento único config/metas.
 
 export async function getMetaDiaria(): Promise<number> {
-  const snap = await getDoc(doc(getDb(), CONFIG, "metas"));
+  const snap = await getDoc(tdoc(CONFIG, "metas"));
   return snap.exists() ? Number(snap.data().diaria) || 0 : 0;
 }
 
 export async function guardarMetaDiaria(diaria: number): Promise<void> {
   await setDoc(
-    doc(getDb(), CONFIG, "metas"),
+    tdoc(CONFIG, "metas"),
     { diaria: Math.max(0, Math.round(diaria || 0)), actualizado: Date.now() },
     { merge: true }
   );
@@ -568,7 +582,7 @@ export async function guardarMetaDiaria(diaria: number): Promise<void> {
 // Correlativo EN-### para documentos de entrada.
 export async function siguienteNroEntrada(): Promise<string> {
   const db = getDb();
-  const ref = doc(db, CONTADORES, "entradas");
+  const ref = tdoc(CONTADORES, "entradas");
   const n = await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     const actual = snap.exists() ? (snap.data().ultimo as number) : 0;
@@ -593,7 +607,7 @@ export async function registrarEntrada(
   for (const l of items) {
     const cod = l.codigo.trim();
     // Documento de movimiento (historial de entradas).
-    batch.set(doc(collection(db, ENTRADAS)), {
+    batch.set(doc(tcol(ENTRADAS)), {
       nro,
       fecha,
       codigo: cod,
@@ -605,7 +619,7 @@ export async function registrarEntrada(
     });
     // Suma al stock (crea el producto si no existia, con merge).
     batch.set(
-      doc(db, PRODUCTOS, cod),
+      tdoc(PRODUCTOS, cod),
       {
         codigo: cod,
         descripcion: l.descripcion,
@@ -620,11 +634,7 @@ export async function registrarEntrada(
 }
 
 export async function ultimasEntradas(max = 30): Promise<Entrada[]> {
-  const q = query(
-    collection(getDb(), ENTRADAS),
-    orderBy("creadoEn", "desc"),
-    limit(max)
-  );
+  const q = query(tcol(ENTRADAS), orderBy("creadoEn", "desc"), limit(max));
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data() as Entrada);
 }

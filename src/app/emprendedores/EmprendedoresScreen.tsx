@@ -23,8 +23,10 @@ import {
 } from "@/lib/repo";
 import type { Emprendedor, Producto } from "@/lib/types";
 import { Modal } from "@/components/Modal";
+import { useNegocio } from "@/lib/negocio-context";
 
 export function EmprendedoresScreen() {
+  const NEGOCIO = useNegocio();
   const [lista, setLista] = useState<Emprendedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -166,7 +168,7 @@ export function EmprendedoresScreen() {
     const d = (e.telefono || "").replace(/\D/g, "");
     const num = d.startsWith("56") ? d : d.length === 9 ? "56" + d : d;
     const txt = encodeURIComponent(
-      `Hola ${e.nombre}, este es tu link para cargar tus productos en Patio Curauma: ${linkDe(e)}`
+      `Hola ${e.nombre}, este es tu link para cargar tus productos en ${NEGOCIO.nombre}: ${linkDe(e)}`
     );
     window.open(`https://wa.me/${num}?text=${txt}`, "_blank");
   }

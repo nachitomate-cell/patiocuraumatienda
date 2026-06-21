@@ -4,10 +4,10 @@ import { VentaScreen } from "./VentaScreen";
 
 export default function VentaPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <VentaScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

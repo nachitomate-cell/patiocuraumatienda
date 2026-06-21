@@ -4,10 +4,10 @@ import { EmprendedoresScreen } from "./EmprendedoresScreen";
 
 export default function EmprendedoresPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <EmprendedoresScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

@@ -4,10 +4,10 @@ import { HistorialScreen } from "./HistorialScreen";
 
 export default function HistorialPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <HistorialScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

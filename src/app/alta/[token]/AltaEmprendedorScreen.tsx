@@ -3,17 +3,19 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { Plus, Check, PackageCheck } from "lucide-react";
-import {
-  getEmprendedorPorToken,
-  agregarProductoEmprendedor,
-  productosDeEmprendedor,
-} from "@/lib/repo";
+import { getEmprendedorPorToken, agregarProductoEmprendedor } from "@/lib/repo";
 import type { Emprendedor, Producto } from "@/lib/types";
 import { money } from "@/lib/format";
+import { useNegocio } from "@/lib/negocio-context";
+import { useAuth } from "@/lib/auth";
 
 export function AltaEmprendedorScreen({ token }: { token: string }) {
+  const { user, loading } = useAuth();
+  const NEGOCIO = useNegocio();
   const [emp, setEmp] = useState<Emprendedor | null>(null);
   const [estado, setEstado] = useState<"cargando" | "ok" | "invalido">("cargando");
+  // Productos agregados en esta sesión (la lista no se relee del servidor: el
+  // emprendedor no tiene permiso para listar el catálogo).
   const [productos, setProductos] = useState<Producto[]>([]);
 
   const [descripcion, setDescripcion] = useState("");
@@ -23,18 +25,24 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
+    // Espera a que haya sesión (anónima) para tener token de Firestore.
+    if (loading || !user) return;
+    let vivo = true;
     getEmprendedorPorToken(token)
-      .then(async (e) => {
+      .then((e) => {
+        if (!vivo) return;
         if (!e) {
           setEstado("invalido");
           return;
         }
         setEmp(e);
         setEstado("ok");
-        setProductos(await productosDeEmprendedor(e.id));
       })
-      .catch(() => setEstado("invalido"));
-  }, [token]);
+      .catch(() => vivo && setEstado("invalido"));
+    return () => {
+      vivo = false;
+    };
+  }, [token, user, loading]);
 
   async function agregar() {
     if (!emp) return;
@@ -49,10 +57,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         stock,
       });
       setMsg(`✅ "${descripcion}" agregado (código ${cod}).`);
+      // Suma a la lista local (sin releer el catálogo).
+      setProductos((prev) => [
+        { codigo: cod, descripcion: descripcion.trim(), precio, stockActual: stock } as Producto,
+        ...prev,
+      ]);
       setDescripcion("");
       setPrecio(0);
       setStock(1);
-      setProductos(await productosDeEmprendedor(emp.id));
     } catch {
       setMsg("No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.");
     } finally {
@@ -70,7 +82,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         <h1 className="text-lg font-bold text-slate-900">Link no válido</h1>
         <p className="text-slate-500 mt-2 text-sm">
           Este enlace no corresponde a ningún emprendedor. Pide uno nuevo al administrador de
-          Patio Curauma.
+          {" "}{NEGOCIO.nombre}.
         </p>
       </div>
     );
@@ -80,9 +92,9 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     <div className="min-h-screen">
       <header className="bg-slate-900 text-white">
         <div className="mx-auto max-w-2xl px-4 h-16 flex items-center gap-3">
-          <Image src="/logo.png" alt="Patio Curauma" width={36} height={48} className="h-10 w-auto" />
+          <Image src={NEGOCIO.logo} alt={NEGOCIO.nombre} width={36} height={48} className="h-10 w-auto" />
           <div className="leading-none">
-            <div className="font-bold">Patio Curauma</div>
+            <div className="font-bold">{NEGOCIO.nombre}</div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300/80">
               Carga de productos
             </div>
@@ -94,7 +106,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         <div className="bg-white rounded-xl shadow p-5 anim-in">
           <h1 className="text-xl font-bold text-slate-900">¡Hola, {emp?.nombre}! 👋</h1>
           <p className="text-slate-500 mt-1">
-            Agrega aquí tus productos. Entran directo al stock de la tienda Patio Curauma.
+            Agrega aquí tus productos. Entran directo al stock de la tienda {NEGOCIO.nombre}.
           </p>
 
           <div className="mt-4 space-y-3">
@@ -171,7 +183,8 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         </div>
 
         <p className="text-center text-xs text-slate-400 pb-6">
-          Patio Curauma · Curauma, Valparaíso
+          {NEGOCIO.nombre}
+          {NEGOCIO.ubicacion && ` · ${NEGOCIO.ubicacion}`}
         </p>
       </main>
     </div>

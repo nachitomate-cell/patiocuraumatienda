@@ -4,10 +4,10 @@ import { AdminScreen } from "./AdminScreen";
 
 export default function AdminPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <AdminScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

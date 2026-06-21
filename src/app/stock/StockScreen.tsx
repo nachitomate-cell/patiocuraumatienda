@@ -33,10 +33,12 @@ import type { Producto } from "@/lib/types";
 import { money } from "@/lib/format";
 import { useAtajos } from "@/lib/useAtajos";
 import { Modal } from "@/components/Modal";
+import { useNegocio } from "@/lib/negocio-context";
 
 type Filtro = "todos" | "con" | "bajo" | "sin";
 
 export function StockScreen() {
+  const NEGOCIO = useNegocio();
   const [productos, setProductos] = useState<Producto[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -188,7 +190,7 @@ export function StockScreen() {
     const ws = XLSX.utils.json_to_sheet(filas);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "INVENTARIO");
-    XLSX.writeFile(wb, `inventario_patio_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `inventario_${NEGOCIO.slug}_${new Date().toISOString().slice(0, 10)}.xlsx`);
   }
 
   useAtajos({

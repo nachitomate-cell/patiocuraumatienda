@@ -16,8 +16,10 @@ import { ultimasVentas, getMetaDiaria, guardarMetaDiaria } from "@/lib/repo";
 import seed from "@/data/productos.seed.json";
 import type { Producto, Venta } from "@/lib/types";
 import { money } from "@/lib/format";
+import { useNegocio } from "@/lib/negocio-context";
 
 export function AdminScreen() {
+  const NEGOCIO = useNegocio();
   const [busy, setBusy] = useState(false);
   const [meta, setMeta] = useState(0);
   const [cargandoMeta, setCargandoMeta] = useState(true);
@@ -63,7 +65,7 @@ export function AdminScreen() {
       const ws = XLSX.utils.json_to_sheet(filas);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "SALIDAS");
-      XLSX.writeFile(wb, `ventas_patio_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(wb, `ventas_${NEGOCIO.slug}_${new Date().toISOString().slice(0, 10)}.xlsx`);
     } finally {
       setBusy(false);
     }
@@ -73,7 +75,7 @@ export function AdminScreen() {
     const ws = XLSX.utils.json_to_sheet(seed as Producto[]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "STOCK");
-    XLSX.writeFile(wb, "catalogo_patio.xlsx");
+    XLSX.writeFile(wb, `catalogo_${NEGOCIO.slug}.xlsx`);
   }
 
   return (

@@ -19,6 +19,7 @@ import {
 } from "@/lib/repo";
 import type { Cliente, MovimientoFiado } from "@/lib/types";
 import { money } from "@/lib/format";
+import { useNegocio } from "@/lib/negocio-context";
 
 export function FiadosScreen() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -182,6 +183,7 @@ function DetalleCliente({
   cliente: Cliente;
   onVolver: () => void;
 }) {
+  const NEGOCIO = useNegocio();
   const [saldo, setSaldo] = useState(cliente.saldo || 0);
   const [movs, setMovs] = useState<MovimientoFiado[]>([]);
   const [monto, setMonto] = useState(0);
@@ -211,7 +213,7 @@ function DetalleCliente({
     const d = (cliente.telefono || "").replace(/\D/g, "");
     const num = d.startsWith("56") ? d : d.length === 9 ? "56" + d : d;
     const txt = encodeURIComponent(
-      `Hola ${cliente.nombre}, le recordamos su saldo pendiente en Patio Curauma: ${money(
+      `Hola ${cliente.nombre}, le recordamos su saldo pendiente en ${NEGOCIO.nombre}: ${money(
         saldo
       )}. ¡Gracias!`
     );

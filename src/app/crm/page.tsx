@@ -4,10 +4,10 @@ import { CrmScreen } from "./CrmScreen";
 
 export default function CrmPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <CrmScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

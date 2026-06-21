@@ -4,10 +4,10 @@ import { EtiquetasScreen } from "./EtiquetasScreen";
 
 export default function EtiquetasPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <EtiquetasScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }

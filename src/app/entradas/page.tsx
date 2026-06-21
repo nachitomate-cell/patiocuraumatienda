@@ -4,10 +4,10 @@ import { EntradasScreen } from "./EntradasScreen";
 
 export default function EntradasPage() {
   return (
-    <AppShell>
-      <AuthGate>
+    <AuthGate>
+      <AppShell>
         <EntradasScreen />
-      </AuthGate>
-    </AppShell>
+      </AppShell>
+    </AuthGate>
   );
 }
