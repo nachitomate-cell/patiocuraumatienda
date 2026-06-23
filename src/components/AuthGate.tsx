@@ -14,6 +14,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const NEGOCIO = useNegocio();
   const [email, setEmail] = useState("");
   const [pass, setPass] = useState("");
+  const [recordar, setRecordar] = useState(true);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -82,7 +83,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               setErr("");
               setBusy(true);
               try {
-                await login(email.trim(), pass);
+                await login(email.trim(), pass, recordar);
               } catch {
                 setErr("Correo o contraseña incorrectos.");
               } finally {
@@ -107,6 +108,15 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               onChange={(e) => setPass(e.target.value)}
               className="w-full border rounded px-3 py-2"
             />
+            <label className="flex items-center gap-2 text-sm text-slate-600 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={recordar}
+                onChange={(e) => setRecordar(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+              />
+              Mantener la sesión iniciada
+            </label>
             {err && <p className="text-sm text-red-600">{err}</p>}
             <button
               disabled={busy}

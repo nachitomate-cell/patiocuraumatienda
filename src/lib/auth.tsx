@@ -6,6 +6,9 @@ import {
   signInWithEmailAndPassword,
   signInAnonymously,
   signOut,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
   type User,
 } from "firebase/auth";
 import { getAuthInstance, isFirebaseConfigured } from "./firebase";
@@ -18,7 +21,10 @@ interface AuthCtx {
   usuario: Usuario | null;
   loading: boolean;
   configured: boolean;
-  login: (email: string, pass: string) => Promise<void>;
+  // recordar=true (por defecto) mantiene la sesión al cerrar el navegador
+  // (persistencia local); false la limita a la pestaña actual (persistencia
+  // de sesión).
+  login: (email: string, pass: string, recordar?: boolean) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -67,8 +73,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     usuario,
     loading,
     configured: isFirebaseConfigured,
-    login: async (email, pass) => {
-      await signInWithEmailAndPassword(getAuthInstance(), email, pass);
+    login: async (email, pass, recordar = true) => {
+      const auth = getAuthInstance();
+      await setPersistence(
+        auth,
+        recordar ? browserLocalPersistence : browserSessionPersistence
+      );
+      await signInWithEmailAndPassword(auth, email, pass);
     },
     logout: async () => {
       await signOut(getAuthInstance());
