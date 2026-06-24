@@ -22,6 +22,7 @@ import { money } from "@/lib/format";
 import { Modal } from "@/components/Modal";
 import { SelectorFecha } from "@/components/SelectorFecha";
 import { useAtajos } from "@/lib/useAtajos";
+import { CrmTabs } from "./CrmTabs";
 
 type Preset = "dia" | "semana" | "mes" | "anio" | "custom";
 
@@ -234,6 +235,7 @@ export function CrmScreen() {
 
   return (
     <div className="space-y-4">
+      <CrmTabs />
       {/* Encabezado + selector de periodo */}
       <div className="bg-white rounded-xl shadow p-4 anim-in">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">

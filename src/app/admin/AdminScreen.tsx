@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Target,
   Check,
+  FlaskConical,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ultimasVentas, getMetaDiaria, guardarMetaDiaria } from "@/lib/repo";
@@ -101,6 +102,24 @@ export function AdminScreen() {
             <span className="block font-semibold text-slate-800">Emprendedores</span>
             <span className="block text-sm text-slate-500">
               Crear emprendedores y generar sus links de carga de productos
+            </span>
+          </span>
+        </span>
+        <ChevronRight className="text-slate-400" />
+      </Link>
+
+      <Link
+        href="/admin/pruebas"
+        className="bg-white rounded-xl shadow p-4 anim-in flex items-center justify-between hover:bg-slate-50"
+      >
+        <span className="flex items-center gap-3">
+          <span className="inline-flex items-center justify-center w-11 h-11 rounded-xl bg-cyan-100 text-cyan-700">
+            <FlaskConical size={22} />
+          </span>
+          <span>
+            <span className="block font-semibold text-slate-800">Módulo de pruebas</span>
+            <span className="block text-sm text-slate-500">
+              Diagnóstico de la app: conexión, catálogo, ventas, formatos y navegador
             </span>
           </span>
         </span>

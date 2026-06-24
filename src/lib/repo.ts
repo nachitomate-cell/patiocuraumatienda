@@ -19,6 +19,7 @@ import { getDb } from "./firebase";
 import { getNegocioId, onCambioNegocio } from "./tenant";
 import {
   subtotalLinea,
+  type Caja,
   type Cliente,
   type Emprendedor,
   type Entrada,
@@ -26,6 +27,7 @@ import {
   type LineaVenta,
   type MovimientoFiado,
   type Producto,
+  type Retiro,
   type Venta,
 } from "./types";
 
@@ -37,6 +39,7 @@ const CLIENTES = "clientes";
 const EMPRENDEDORES = "emprendedores";
 const CONTADORES = "contadores";
 const CONFIG = "config";
+const CAJAS = "cajas";
 
 // ===== Helpers de tenant =====
 // Todas las colecciones del negocio cuelgan de negocios/{negocioId}/... Estos
@@ -320,15 +323,32 @@ export async function confirmarVenta(
 ): Promise<void> {
   const db = getDb();
   const batch = writeBatch(db);
-  const total = venta.items.reduce((s, l) => s + subtotalLinea(l), 0);
+
+  // Estampa emprendedorId/Nombre en cada línea de catálogo a partir del cache.
+  // Esto permite análisis histórico fidedigno: las ventas no dependen del
+  // estado actual del producto (que puede haber cambiado de dueño o
+  // eliminado). Si el cache está vacío o el producto no se encuentra, la
+  // línea queda sin emprendedor (se podrá cruzar al vuelo como fallback).
+  const itemsConEmp = venta.items.map((l) => {
+    if (l.manual || !l.codigo) return l;
+    const p = _catalogo?.find((x) => x.codigo === l.codigo);
+    if (!p?.emprendedorId) return l;
+    return {
+      ...l,
+      emprendedorId: p.emprendedorId,
+      emprendedorNombre: p.emprendedorNombre ?? "",
+    };
+  });
+  const total = itemsConEmp.reduce((s, l) => s + subtotalLinea(l), 0);
 
   batch.set(tdoc(VENTAS, venta.nro), {
     ...venta,
+    items: itemsConEmp,
     total,
     creadoEn: Date.now(),
   });
 
-  for (const l of venta.items) {
+  for (const l of itemsConEmp) {
     // Los productos manuales (fuera de catálogo) no existen como documento,
     // así que no se les descuenta stock: actualizarlos rompería el lote.
     if (l.manual || !l.codigo) continue;
@@ -639,4 +659,90 @@ export async function ultimasEntradas(max = 30): Promise<Entrada[]> {
   return snap.docs.map((d) => d.data() as Entrada);
 }
 
-export type { Entrada, LineaEntrada, LineaVenta, Producto, Venta };
+// ===== Caja (turno) =====
+// Convención: solo puede haber UNA caja abierta a la vez. Las funciones de
+// apertura validan ese invariante; el cierre solo afecta a la caja abierta.
+
+// Devuelve la caja abierta del negocio, si existe.
+export async function cajaAbierta(): Promise<Caja | null> {
+  const q = query(
+    tcol(CAJAS),
+    where("cerradaEn", "==", null),
+    orderBy("aperturaEn", "desc"),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...(d.data() as Omit<Caja, "id">) };
+}
+
+// Abre una caja nueva. Falla si ya hay una abierta.
+export async function abrirCaja(
+  fondoInicial: number,
+  umbralRetiro: number,
+  vendedor: string
+): Promise<Caja> {
+  const actual = await cajaAbierta();
+  if (actual) {
+    throw new Error("Ya hay una caja abierta. Ciérrala antes de abrir otra.");
+  }
+  const datos: Omit<Caja, "id"> = {
+    aperturaEn: Date.now(),
+    cerradaEn: null,
+    fondoInicial: Math.max(0, Math.round(fondoInicial || 0)),
+    umbralRetiro: Math.max(0, Math.round(umbralRetiro || 0)),
+    retiros: [],
+    abridoPor: vendedor || "",
+  };
+  const ref = await addDoc(tcol(CAJAS), datos);
+  return { id: ref.id, ...datos };
+}
+
+// Registra un retiro (salida de efectivo). Solo aplica si la caja sigue
+// abierta: actualiza el array de retiros de forma transaccional.
+export async function registrarRetiro(cajaId: string, retiro: Retiro): Promise<void> {
+  const db = getDb();
+  const ref = tdoc(CAJAS, cajaId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("La caja no existe.");
+    const c = snap.data() as Caja;
+    if (c.cerradaEn) throw new Error("La caja ya está cerrada.");
+    const retiros = [...(c.retiros ?? []), retiro];
+    tx.update(ref, { retiros });
+  });
+}
+
+// Cierra la caja: guarda lo contado, calcula la diferencia y la archiva.
+export async function cerrarCaja(
+  cajaId: string,
+  cierreContado: number,
+  esperado: number,
+  vendedor: string,
+  notas = ""
+): Promise<void> {
+  const db = getDb();
+  const ref = tdoc(CAJAS, cajaId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("La caja no existe.");
+    const c = snap.data() as Caja;
+    if (c.cerradaEn) throw new Error("La caja ya está cerrada.");
+    tx.update(ref, {
+      cerradaEn: Date.now(),
+      cierreContado: Math.max(0, Math.round(cierreContado || 0)),
+      diferencia: Math.round((cierreContado || 0) - esperado),
+      cerradoPor: vendedor || "",
+      notas: notas.trim(),
+    });
+  });
+}
+
+export async function ultimasCajas(max = 30): Promise<Caja[]> {
+  const q = query(tcol(CAJAS), orderBy("aperturaEn", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Caja, "id">) }));
+}
+
+export type { Caja, Entrada, LineaEntrada, LineaVenta, Producto, Retiro, Venta };

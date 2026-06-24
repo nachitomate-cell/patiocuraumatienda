@@ -10,11 +10,11 @@ import {
 } from "@/lib/repo";
 import type { Entrada, LineaEntrada, Producto } from "@/lib/types";
 import { hoyISO } from "@/lib/format";
-import { useAuth } from "@/lib/auth";
+import { useVendedor } from "@/lib/vendedor";
 import { SelectorFecha } from "@/components/SelectorFecha";
 
 export function EntradasScreen() {
-  const { user } = useAuth();
+  const vendedor = useVendedor();
   const [fecha, setFecha] = useState(hoyISO());
   const [codigo, setCodigo] = useState("");
   const [cantidad, setCantidad] = useState(1);
@@ -75,7 +75,7 @@ export function EntradasScreen() {
     setMsg("");
     try {
       const nro = await siguienteNroEntrada();
-      await registrarEntrada(nro, fecha, items, user?.email ?? "");
+      await registrarEntrada(nro, fecha, items, vendedor);
       setMsg(`✅ Entrada ${nro} registrada. Stock actualizado.`);
       setItems([]);
       cargarHistorial();

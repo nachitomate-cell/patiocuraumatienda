@@ -2,8 +2,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Store, UserPlus, ShieldCheck, LogOut, Plus, Loader2 } from "lucide-react";
-import { useAuth } from "@/lib/auth";
 import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  type User,
+} from "firebase/auth";
+import { getAuthInstance, isFirebaseConfigured } from "@/lib/firebase";
+import {
+  esModerador,
   listarNegocios,
   listarUsuarios,
   crearNegocio,
@@ -16,29 +23,52 @@ import {
 
 type Acceso = "verificando" | "necesita-login" | "denegado" | "ok";
 
+// El panel /moderador mantiene su propio login con email/contraseña, separado
+// del POS (que ya no tiene login). Aquí se usa Firebase Auth directamente y se
+// verifica el rol contra la colección usuarios.
 export function ModeradorScreen() {
-  const { user, loading, configured, login, logout } = useAuth();
+  const [user, setUser] = useState<User | null>(null);
+  const [cargandoAuth, setCargandoAuth] = useState(true);
   const [acceso, setAcceso] = useState<Acceso>("verificando");
 
-  // Verifica si el usuario actual (real, no anónimo) es moderador.
+  useEffect(() => {
+    if (!isFirebaseConfigured) {
+      setCargandoAuth(false);
+      return;
+    }
+    return onAuthStateChanged(getAuthInstance(), (u) => {
+      // Se ignora el usuario anónimo creado por el AuthProvider del POS: aquí
+      // solo cuenta el moderador con email/contraseña.
+      setUser(u && !u.isAnonymous ? u : null);
+      setCargandoAuth(false);
+    });
+  }, []);
+
   useEffect(() => {
     let vivo = true;
     (async () => {
-      if (loading) return;
-      if (!user || user.isAnonymous) {
+      if (cargandoAuth) return;
+      if (!user) {
         if (vivo) setAcceso("necesita-login");
         return;
       }
-      const { esModerador } = await import("@/lib/admin");
       const ok = await esModerador(user.uid);
       if (vivo) setAcceso(ok ? "ok" : "denegado");
     })();
     return () => {
       vivo = false;
     };
-  }, [user, loading]);
+  }, [user, cargandoAuth]);
 
-  if (!configured) {
+  async function login(email: string, pass: string) {
+    await signInWithEmailAndPassword(getAuthInstance(), email, pass);
+  }
+
+  async function logout() {
+    await signOut(getAuthInstance());
+  }
+
+  if (!isFirebaseConfigured) {
     return (
       <Aviso titulo="Falta configurar Firebase">
         Completa el archivo <code>.env.local</code> con las claves de tu proyecto.
@@ -46,7 +76,7 @@ export function ModeradorScreen() {
     );
   }
 
-  if (loading || acceso === "verificando") {
+  if (cargandoAuth || acceso === "verificando") {
     return <div className="mt-20 text-center text-slate-500">Cargando…</div>;
   }
 

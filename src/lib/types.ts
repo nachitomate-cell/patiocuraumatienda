@@ -29,6 +29,11 @@ export interface LineaVenta {
   precio: number;
   descuento: number; // porcentaje 0-100
   manual?: boolean; // producto fuera de catálogo: no descuenta stock
+  // Snapshot del emprendedor dueño del producto al momento de la venta. Se
+  // estampa en confirmarVenta para que el análisis histórico no dependa del
+  // catálogo actual (un producto puede cambiar de dueño o eliminarse).
+  emprendedorId?: string;
+  emprendedorNombre?: string;
 }
 
 export type MedioPago = "efectivo" | "debito" | "credito" | "transferencia" | "fiado";
@@ -84,4 +89,33 @@ export interface Entrada {
 
 export function subtotalLinea(l: LineaVenta): number {
   return l.cantidad * l.precio * (1 - (l.descuento || 0) / 100);
+}
+
+// ===== Caja (turno) =====
+// Una caja agrupa el efectivo de un turno: se abre con un fondo inicial, se le
+// registran retiros durante el turno y se cierra contando físicamente el
+// efectivo. Las ventas del turno son las que tienen creadoEn dentro del rango
+// [aperturaEn, cerradaEn || ahora]: no hay foreign key.
+
+export interface Retiro {
+  monto: number;
+  hora: number; // epoch ms
+  motivo: string;
+  vendedor: string;
+}
+
+export interface Caja {
+  id: string;
+  aperturaEn: number; // epoch ms
+  // cerradaEn = null mientras la caja está abierta (se usa así para poder
+  // consultarla con where("cerradaEn", "==", null) en Firestore).
+  cerradaEn: number | null;
+  fondoInicial: number; // efectivo con que se abre la caja
+  umbralRetiro: number; // sobre este saldo de efectivo el POS sugiere retirar
+  retiros: Retiro[];
+  abridoPor?: string; // nombre del vendedor que abrió
+  cerradoPor?: string;
+  cierreContado?: number; // efectivo físico contado al cerrar
+  diferencia?: number; // contado - esperado (sobrante > 0, faltante < 0)
+  notas?: string;
 }

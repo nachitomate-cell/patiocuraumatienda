@@ -37,7 +37,7 @@ import {
   type MedioPago,
 } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
-import { useAuth } from "@/lib/auth";
+import { useVendedor } from "@/lib/vendedor";
 import { useAtajos } from "@/lib/useAtajos";
 import { Ticket } from "@/components/Ticket";
 import { EscanerCamara } from "@/components/EscanerCamara";
@@ -52,7 +52,7 @@ function norm(s: string): string {
 }
 
 export function VentaScreen() {
-  const { user } = useAuth();
+  const vendedor = useVendedor();
   const [nro, setNro] = useState("NV-—");
   const [cliente, setCliente] = useState("");
   const [term, setTerm] = useState("");
@@ -282,7 +282,7 @@ export function VentaScreen() {
         cliente: cliente || "Consumidor Final",
         items,
         total,
-        vendedor: user?.email ?? "",
+        vendedor,
         medioPago,
       };
       await confirmarVenta(

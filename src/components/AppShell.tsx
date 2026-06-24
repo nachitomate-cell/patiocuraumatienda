@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
@@ -14,19 +14,22 @@ import {
   Store,
   BarChart3,
   Settings,
-  LogOut,
   ZoomIn,
   ZoomOut,
   Keyboard,
+  UserCircle2,
+  Wallet,
 } from "lucide-react";
-import { useAuth } from "@/lib/auth";
 import { useUiMode } from "@/lib/uimode";
 import { useAtajos } from "@/lib/useAtajos";
 import { AtajosAyuda } from "@/components/AtajosAyuda";
 import { useNegocio } from "@/lib/negocio-context";
+import { useVendedor, setVendedor } from "@/lib/vendedor";
+import { Modal } from "@/components/Modal";
 
 const NAV = [
   { href: "/venta", label: "Venta", Icon: ShoppingCart },
+  { href: "/caja", label: "Caja", Icon: Wallet },
   { href: "/entradas", label: "Entradas", Icon: PackagePlus },
   { href: "/stock", label: "Stock", Icon: Boxes },
   { href: "/etiquetas", label: "Etiquetas", Icon: Barcode },
@@ -40,10 +43,11 @@ const NAV = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
-  const { user, logout, configured } = useAuth();
   const { mode, toggle } = useUiMode();
   const NEGOCIO = useNegocio();
+  const vendedor = useVendedor();
   const [ayuda, setAyuda] = useState(false);
+  const [editarVendedor, setEditarVendedor] = useState(false);
 
   // Atajos globales: Alt+1..9 navega a cada sección; "?" abre la ayuda.
   useAtajos({
@@ -94,21 +98,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
 
           <div className="text-xs flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {configured && user && !user.isAnonymous && (
-              <>
-                <span className="text-slate-300 hidden 2xl:inline-block max-w-[150px] truncate align-middle">
-                  {user.email}
-                </span>
-                <button
-                  onClick={() => logout()}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-slate-700"
-                  title="Cerrar sesión"
-                >
-                  <LogOut size={16} />
-                  <span className="hidden sm:inline">Salir</span>
-                </button>
-              </>
-            )}
+            <button
+              onClick={() => setEditarVendedor(true)}
+              title="Vendedor actual (toca para cambiar)"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-600 hover:bg-slate-700 max-w-[180px]"
+            >
+              <UserCircle2 size={16} className="shrink-0" />
+              <span className="truncate">{vendedor || "Sin vendedor"}</span>
+            </button>
             <button
               onClick={() => setAyuda(true)}
               title="Atajos de teclado (?)"
@@ -132,6 +129,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <AtajosAyuda abierto={ayuda} onCerrar={() => setAyuda(false)} />
+      <ModalVendedor
+        abierto={editarVendedor}
+        actual={vendedor}
+        onCerrar={() => setEditarVendedor(false)}
+      />
 
       <main
         className={`flex-1 mx-auto w-full max-w-[1600px] px-2 sm:px-4 py-6 ${
@@ -141,5 +143,65 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
     </div>
+  );
+}
+
+function ModalVendedor({
+  abierto,
+  actual,
+  onCerrar,
+}: {
+  abierto: boolean;
+  actual: string;
+  onCerrar: () => void;
+}) {
+  const [nombre, setNombre] = useState(actual);
+  // Sincroniza el input con el valor actual cada vez que se reabre.
+  useEffect(() => {
+    if (abierto) setNombre(actual);
+  }, [abierto, actual]);
+
+  function guardar() {
+    setVendedor(nombre);
+    onCerrar();
+  }
+
+  return (
+    <Modal abierto={abierto} onCerrar={onCerrar} titulo="Vendedor en este dispositivo" maxW="max-w-sm">
+      <p className="text-sm text-slate-500 mb-3">
+        Tu nombre se guarda en este dispositivo y queda registrado en las ventas y entradas que
+        hagas.
+      </p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          guardar();
+        }}
+      >
+        <input
+          autoFocus
+          type="text"
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          placeholder="Ej: Camila"
+          className="w-full border-2 rounded-xl px-4 py-2.5 text-lg"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="btn-accion bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded-lg px-4 py-2.5"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            className="btn-accion bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-4 py-2.5"
+          >
+            Guardar
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
