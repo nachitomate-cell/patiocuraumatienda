@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Store, UserPlus, ShieldCheck, LogOut, Plus, Loader2 } from "lucide-react";
+import { Store, UserPlus, ShieldCheck, LogOut, Plus, Loader2, Pencil } from "lucide-react";
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -14,12 +14,14 @@ import {
   listarNegocios,
   listarUsuarios,
   crearNegocio,
+  actualizarNegocio,
   crearUsuario,
   normalizarSlug,
   type Negocio,
   type Usuario,
   type RolUsuario,
 } from "@/lib/admin";
+import { Modal } from "@/components/Modal";
 
 type Acceso = "verificando" | "necesita-login" | "denegado" | "ok";
 
@@ -167,6 +169,7 @@ function SeccionNegocios({
   const [instagram, setInstagram] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const [editando, setEditando] = useState<Negocio | null>(null);
 
   // El subdominio se autogenera desde el nombre mientras no se edite a mano.
   const [slugTocado, setSlugTocado] = useState(false);
@@ -216,13 +219,32 @@ function SeccionNegocios({
       {negocios.length > 0 && (
         <ul className="divide-y mb-5">
           {negocios.map((n) => (
-            <li key={n.slug} className="flex items-center justify-between py-2 text-sm">
-              <span className="font-medium text-slate-800">{n.nombre || n.slug}</span>
-              <span className="font-mono text-slate-400">{n.slug}.synaptechspa.cl</span>
+            <li key={n.slug} className="flex items-center justify-between py-2 text-sm gap-3">
+              <span className="font-medium text-slate-800 truncate">{n.nombre || n.slug}</span>
+              <span className="flex items-center gap-3 shrink-0">
+                <span className="font-mono text-slate-400">{n.slug}.synaptechspa.cl</span>
+                <button
+                  onClick={() => setEditando(n)}
+                  className="text-slate-400 hover:text-cyan-600 p-1 rounded"
+                  aria-label={`Editar ${n.nombre || n.slug}`}
+                  title="Editar branding"
+                >
+                  <Pencil size={16} />
+                </button>
+              </span>
             </li>
           ))}
         </ul>
       )}
+
+      <EditarNegocioModal
+        negocio={editando}
+        onCerrar={() => setEditando(null)}
+        onGuardado={async () => {
+          setEditando(null);
+          await onCambio();
+        }}
+      />
 
       <div className="grid sm:grid-cols-2 gap-3">
         <Campo label="Nombre del negocio">
@@ -290,6 +312,164 @@ function SeccionNegocios({
         Crear negocio
       </button>
     </section>
+  );
+}
+
+// ===== Editar negocio =====
+
+function EditarNegocioModal({
+  negocio,
+  onCerrar,
+  onGuardado,
+}: {
+  negocio: Negocio | null;
+  onCerrar: () => void;
+  onGuardado: () => Promise<void>;
+}) {
+  const [nombre, setNombre] = useState("");
+  const [nombreCorto, setNombreCorto] = useState("");
+  const [logo, setLogo] = useState("");
+  const [fondoLogin, setFondoLogin] = useState("");
+  const [rubro, setRubro] = useState("");
+  const [ubicacion, setUbicacion] = useState("");
+  const [eslogan, setEslogan] = useState("");
+  const [web, setWeb] = useState("");
+  const [instagram, setInstagram] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Carga los valores actuales cada vez que se abre con un negocio distinto.
+  useEffect(() => {
+    if (!negocio) return;
+    setNombre(negocio.nombre || "");
+    setNombreCorto(negocio.nombreCorto || "");
+    setLogo(negocio.logo || "");
+    setFondoLogin(negocio.fondoLogin || "");
+    setRubro(negocio.rubro || "");
+    setUbicacion(negocio.ubicacion || "");
+    setEslogan(negocio.eslogan || "");
+    setWeb(negocio.web || "");
+    setInstagram(negocio.instagram || "");
+    setErr("");
+  }, [negocio]);
+
+  async function guardar() {
+    if (!negocio) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await actualizarNegocio(negocio.slug, {
+        nombre,
+        nombreCorto: nombreCorto.trim(),
+        logo: logo.trim(),
+        fondoLogin: fondoLogin.trim(),
+        rubro: rubro.trim(),
+        ubicacion: ubicacion.trim(),
+        eslogan: eslogan.trim(),
+        web: web.trim(),
+        instagram: instagram.trim(),
+      });
+      await onGuardado();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      abierto={!!negocio}
+      onCerrar={onCerrar}
+      titulo={negocio ? `Editar ${negocio.nombre || negocio.slug}` : ""}
+      maxW="max-w-xl"
+    >
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Campo label="Nombre del negocio">
+          <input value={nombre} onChange={(e) => setNombre(e.target.value)} className={inputCls} />
+        </Campo>
+        <Campo label="Subdominio (fijo)">
+          <div className="flex items-center">
+            <input value={negocio?.slug || ""} disabled className={`${inputCls} rounded-r-none bg-slate-50 text-slate-500`} />
+            <span className="border border-l-0 rounded-r-lg px-2 py-2 bg-slate-50 text-slate-400 text-sm">
+              .synaptechspa.cl
+            </span>
+          </div>
+        </Campo>
+        <Campo label="Nombre corto (PWA)">
+          <input value={nombreCorto} onChange={(e) => setNombreCorto(e.target.value)} className={inputCls} />
+        </Campo>
+        <Campo label="Logo: URL o ruta">
+          <input
+            value={logo}
+            onChange={(e) => setLogo(e.target.value)}
+            placeholder="/logos/vidasana.png"
+            className={inputCls}
+          />
+        </Campo>
+        <Campo label="Fondo del login: URL o ruta">
+          <input
+            value={fondoLogin}
+            onChange={(e) => setFondoLogin(e.target.value)}
+            placeholder="/logos/vidasana.png"
+            className={inputCls}
+          />
+        </Campo>
+        <Campo label="Rubro">
+          <input value={rubro} onChange={(e) => setRubro(e.target.value)} className={inputCls} />
+        </Campo>
+        <Campo label="Ubicación">
+          <input value={ubicacion} onChange={(e) => setUbicacion(e.target.value)} className={inputCls} />
+        </Campo>
+        <Campo label="Eslogan">
+          <input value={eslogan} onChange={(e) => setEslogan(e.target.value)} className={inputCls} />
+        </Campo>
+        <Campo label="Web">
+          <input value={web} onChange={(e) => setWeb(e.target.value)} className={inputCls} />
+        </Campo>
+        <Campo label="Instagram">
+          <input value={instagram} onChange={(e) => setInstagram(e.target.value)} className={inputCls} />
+        </Campo>
+      </div>
+
+      {(logo.trim() || fondoLogin.trim()) && (
+        <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
+          {logo.trim() && (
+            <div className="flex flex-col items-center gap-1">
+              <span>Logo</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={logo.trim()} alt="logo" className="h-14 w-14 object-contain border rounded bg-white" />
+            </div>
+          )}
+          {fondoLogin.trim() && (
+            <div className="flex flex-col items-center gap-1">
+              <span>Fondo</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={fondoLogin.trim()} alt="fondo" className="h-14 w-14 object-cover border rounded" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {err && <p className="mt-3 text-sm text-red-600">{err}</p>}
+
+      <div className="mt-5 flex items-center justify-end gap-2">
+        <button
+          onClick={onCerrar}
+          className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100"
+        >
+          Cancelar
+        </button>
+        <button
+          onClick={guardar}
+          disabled={busy || !nombre.trim()}
+          className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-4 py-2 disabled:opacity-50"
+        >
+          {busy && <Loader2 size={16} className="animate-spin" />}
+          Guardar cambios
+        </button>
+      </div>
+    </Modal>
   );
 }
 

@@ -93,6 +93,21 @@ export async function crearNegocio(
   return id;
 }
 
+// Actualiza un negocio existente (branding, logos, etc). No cambia el slug.
+// Usa merge: cualquier campo omitido queda intacto en Firestore.
+export async function actualizarNegocio(
+  slug: string,
+  datos: Partial<Omit<Negocio, "slug" | "creadoEn">>
+): Promise<void> {
+  if (!slug) throw new Error("Falta el subdominio del negocio.");
+  if (datos.nombre !== undefined && !datos.nombre.trim()) {
+    throw new Error("El nombre no puede quedar vacío.");
+  }
+  const limpio: Record<string, unknown> = { ...datos };
+  if (typeof limpio.nombre === "string") limpio.nombre = limpio.nombre.trim();
+  await setDoc(doc(getDb(), NEGOCIOS, slug), limpio, { merge: true });
+}
+
 // ===== Usuarios =====
 
 export async function listarUsuarios(): Promise<Usuario[]> {
