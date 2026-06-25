@@ -57,6 +57,7 @@ export function NegocioProvider({ children }: { children: ReactNode }) {
           fondoLogin: n.fondoLogin || "",
           qrClub: n.qrClub || "",
           slug: n.slug || slug,
+          boleta: n.boleta,
         });
       })
       .catch(() => {

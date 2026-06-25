@@ -102,8 +102,10 @@ export function CajaScreen() {
       }
     }
     const totalRetiros = (caja?.retiros ?? []).reduce((s, r) => s + r.monto, 0);
-    const efectivoEsperado = (caja?.fondoInicial ?? 0) + porMedio.efectivo - totalRetiros;
-    return { porMedio, totalVentas, nVentas, totalRetiros, efectivoEsperado };
+    const totalDevoluciones = (caja?.devoluciones ?? []).reduce((s, d) => s + d.monto, 0);
+    const efectivoEsperado =
+      (caja?.fondoInicial ?? 0) + porMedio.efectivo - totalRetiros - totalDevoluciones;
+    return { porMedio, totalVentas, nVentas, totalRetiros, totalDevoluciones, efectivoEsperado };
   }, [ventas, caja]);
 
   return (
@@ -155,6 +157,7 @@ export function CajaScreen() {
             fondo={caja.fondoInicial}
             ingresosEf={m.porMedio.efectivo}
             salidas={m.totalRetiros}
+            devoluciones={m.totalDevoluciones}
             onRetiro={() => setRetiroModal(true)}
             onCerrar={() => setCerrarModal(true)}
             onRefresh={cargar}
@@ -213,6 +216,31 @@ export function CajaScreen() {
               </ul>
             )}
           </div>
+
+          {/* Devoluciones del turno (egresos por reverso de ventas en efectivo) */}
+          {caja.devoluciones && caja.devoluciones.length > 0 && (
+            <div className="bg-white rounded-xl shadow p-4 anim-in">
+              <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-2">
+                <Minus size={18} className="text-red-600" /> Devoluciones del turno (
+                {caja.devoluciones.length})
+              </h2>
+              <ul className="divide-y divide-slate-100 text-sm">
+                {caja.devoluciones.map((d, i) => (
+                  <li key={i} className="py-2 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-slate-800">−{money(d.monto)}</div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {fmtHora(d.hora)} · <span className="font-mono">{d.nro}</span> contra{" "}
+                        <span className="font-mono">{d.ventaNro}</span>
+                        {d.motivo && ` · ${d.motivo}`}
+                        {d.vendedor && ` · ${d.vendedor}`}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </>
       )}
 
@@ -315,13 +343,14 @@ export function CajaScreen() {
 // ===== Sub-componentes =====
 
 function SaldoEfectivo({
-  esperado, umbral, fondo, ingresosEf, salidas, onRetiro, onCerrar, onRefresh,
+  esperado, umbral, fondo, ingresosEf, salidas, devoluciones, onRetiro, onCerrar, onRefresh,
 }: {
   esperado: number;
   umbral: number;
   fondo: number;
   ingresosEf: number;
   salidas: number;
+  devoluciones: number;
   onRetiro: () => void;
   onCerrar: () => void;
   onRefresh: () => void;
@@ -355,6 +384,7 @@ function SaldoEfectivo({
             superaUmbral ? "text-amber-700" : "text-emerald-100"
           }`}>
             {money(fondo)} fondo + {money(ingresosEf)} ventas efectivo − {money(salidas)} retiros
+            {devoluciones > 0 && ` − ${money(devoluciones)} devoluciones`}
           </div>
         </div>
         <div className="flex flex-col gap-2 shrink-0">
@@ -445,6 +475,9 @@ function FilaHistorial({ c }: { c: Caja }) {
           </div>
           <div className="text-xs text-slate-500">
             Fondo {money(c.fondoInicial)} · {(c.retiros ?? []).length} retiro(s)
+            {(c.devoluciones ?? []).length > 0 && (
+              <> · {(c.devoluciones ?? []).length} devolución(es)</>
+            )}
             {cerrada && c.diferencia !== undefined && (
               <span className={`ml-2 font-semibold ${
                 c.diferencia === 0 ? "text-emerald-600"

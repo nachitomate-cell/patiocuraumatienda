@@ -151,14 +151,19 @@ export function VentaScreen() {
 
   // Agregado rápido: suma 1 al carrito SIN cerrar la lista, para ir
   // agregando varios productos seguidos sin volver a buscar.
-  // Devuelve true si lo agregó (false si no había stock).
+  // Se permite vender bajo stock (el stockActual queda en negativo al
+  // confirmar): solo se avisa, no se bloquea. Casos típicos: la mercadería ya
+  // llegó pero todavía no se registró, o el ítem está en exhibición pero el
+  // resto está en bodega.
   function agregarRapido(p: Producto): boolean {
     const yaEnCarrito = enCarritoPorCodigo.get(p.codigo) ?? 0;
     if (yaEnCarrito + 1 > p.stockActual) {
-      setMsg(`Stock insuficiente: quedan ${p.stockActual} de ${p.descripcion}.`);
-      return false;
+      setMsg(
+        `Aviso: ${p.descripcion} sin stock suficiente (quedan ${p.stockActual}). Se agrega igual; el stock quedará en negativo.`
+      );
+    } else {
+      setMsg("");
     }
-    setMsg("");
     agregarLinea({
       codigo: p.codigo,
       descripcion: p.descripcion,
@@ -210,12 +215,13 @@ export function VentaScreen() {
     if (!seleccionado) return;
     if (cantidad <= 0) return setMsg("Cantidad inválida.");
     if (cantidad > seleccionado.stockActual) {
+      // Se permite vender bajo stock: solo avisar.
       setMsg(
-        `Stock insuficiente: quedan ${seleccionado.stockActual} de ${seleccionado.descripcion}.`
+        `Aviso: ${seleccionado.descripcion} sin stock suficiente (quedan ${seleccionado.stockActual}). Se agrega igual; el stock quedará en negativo.`
       );
-      return;
+    } else {
+      setMsg("");
     }
-    setMsg("");
     agregarLinea({
       codigo: seleccionado.codigo,
       descripcion: seleccionado.descripcion,
@@ -237,8 +243,10 @@ export function VentaScreen() {
     if (cant <= 0) return setMsg("Cantidad inválida.");
     const p = await buscarParaVenta(c);
     if (p && cant > p.stockActual) {
-      setMsg(`Stock insuficiente: quedan ${p.stockActual} unid. de ${p.descripcion}.`);
-      return;
+      // Aviso, no bloqueo: la venta procede aunque el stock quede negativo.
+      setMsg(
+        `Aviso: ${p.descripcion} sin stock suficiente (quedan ${p.stockActual}). Se agrega igual; el stock quedará en negativo.`
+      );
     }
     agregarLinea({
       codigo: p?.codigo ?? c,
@@ -553,13 +561,23 @@ export function VentaScreen() {
                                       </span>
                                     </span>
                                   </button>
-                                  {/* Botón +: agrega 1 y deja la lista abierta (agregar varios) */}
+                                  {/* Botón +: agrega 1 y deja la lista abierta (agregar varios).
+                                      Sin stock no se bloquea (se vende bajo stock,
+                                      el stockActual queda en negativo): solo cambia el
+                                      color para que el cajero lo note. */}
                                   <button
                                     onClick={() => agregarRapido(p)}
-                                    disabled={sinStock}
-                                    title="Agregar 1 al carrito"
+                                    title={
+                                      sinStock
+                                        ? "Sin stock — se agrega igual (quedará negativo)"
+                                        : "Agregar 1 al carrito"
+                                    }
                                     aria-label={`Agregar ${p.descripcion} al carrito`}
-                                    className="shrink-0 w-16 flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white disabled:opacity-40"
+                                    className={`shrink-0 w-16 flex items-center justify-center text-white ${
+                                      sinStock
+                                        ? "bg-amber-500 hover:bg-amber-600 active:bg-amber-700"
+                                        : "bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800"
+                                    }`}
                                   >
                                     <Plus size={24} />
                                   </button>

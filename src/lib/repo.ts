@@ -21,6 +21,8 @@ import {
   subtotalLinea,
   type Caja,
   type Cliente,
+  type Devolucion,
+  type DevolucionCaja,
   type Emprendedor,
   type Entrada,
   type LineaEntrada,
@@ -40,6 +42,7 @@ const EMPRENDEDORES = "emprendedores";
 const CONTADORES = "contadores";
 const CONFIG = "config";
 const CAJAS = "cajas";
+const DEVOLUCIONES = "devoluciones";
 
 // ===== Helpers de tenant =====
 // Todas las colecciones del negocio cuelgan de negocios/{negocioId}/... Estos
@@ -745,4 +748,142 @@ export async function ultimasCajas(max = 30): Promise<Caja[]> {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Caja, "id">) }));
 }
 
-export type { Caja, Entrada, LineaEntrada, LineaVenta, Producto, Retiro, Venta };
+// ===== Devoluciones =====
+// Una devolución es un documento aparte que referencia la venta original
+// (ventaNro). NUNCA mutamos la venta: las comisiones, el historial y los
+// reportes siguen viendo la venta original íntegra, y restan/cruzan las
+// devoluciones para los netos.
+
+export async function siguienteNroDevolucion(): Promise<string> {
+  const db = getDb();
+  const ref = tdoc(CONTADORES, "devoluciones");
+  const n = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const actual = snap.exists() ? (snap.data().ultimo as number) : 0;
+    const siguiente = actual + 1;
+    tx.set(ref, { ultimo: siguiente }, { merge: true });
+    return siguiente;
+  });
+  return "DV-" + String(n).padStart(3, "0");
+}
+
+// Registra una devolución contra una venta existente. Reaplica los efectos
+// del cobro en reverso, todo en el mismo batch para mantener consistencia:
+//  - re-incrementa stock de las líneas con código (las manuales se ignoran),
+//  - si la venta era fiado: baja la deuda del cliente y deja "abono",
+//  - si era efectivo: asienta el egreso en caja.devoluciones[],
+//  - debito/credito/transferencia: solo deja registro.
+// Lanza error si el medio era efectivo y no hay caja abierta.
+export async function registrarDevolucion(
+  input: Omit<Devolucion, "nro" | "creadoEn" | "total" | "cajaId">
+): Promise<string> {
+  if (!input.items.length) throw new Error("La devolución no tiene líneas.");
+  for (const l of input.items) {
+    if (l.cantidad <= 0) throw new Error("Las cantidades deben ser mayores a cero.");
+  }
+
+  const total = input.items.reduce((s, l) => s + subtotalLinea(l), 0);
+  const ahora = Date.now();
+
+  // Efectivo necesita caja abierta. Para el resto de medios, cajaSnap == null.
+  let cajaSnap: Caja | null = null;
+  if (input.medioPagoOriginal === "efectivo") {
+    cajaSnap = await cajaAbierta();
+    if (!cajaSnap) {
+      throw new Error("Para devolver en efectivo primero abre la caja.");
+    }
+  }
+
+  if (input.medioPagoOriginal === "fiado" && !input.clienteId) {
+    throw new Error("La venta a fiado no tiene cliente asociado: no se puede revertir la deuda.");
+  }
+
+  const nro = await siguienteNroDevolucion();
+  const db = getDb();
+  const batch = writeBatch(db);
+
+  const devolucion: Devolucion = {
+    ...input,
+    nro,
+    total,
+    creadoEn: ahora,
+    cajaId: cajaSnap?.id ?? "",
+  };
+  batch.set(tdoc(DEVOLUCIONES, nro), devolucion);
+
+  // Reingresa stock por línea (los manuales no tienen producto en catálogo).
+  for (const l of input.items) {
+    if (l.manual || !l.codigo) continue;
+    batch.update(tdoc(PRODUCTOS, l.codigo), {
+      stockActual: increment(l.cantidad),
+    });
+  }
+
+  // Fiado: reduce la deuda del cliente y deja el movimiento como "abono"
+  // ligado a la venta original (para que aparezca en su detalle de cuenta).
+  if (input.medioPagoOriginal === "fiado" && input.clienteId) {
+    batch.set(doc(tcol(CLIENTES, input.clienteId, "movimientos")), {
+      tipo: "abono",
+      monto: total,
+      fecha: input.fecha,
+      ventaNro: input.ventaNro,
+      nota: `Devolución ${nro}`,
+      creadoEn: ahora,
+    });
+    batch.update(tdoc(CLIENTES, input.clienteId), {
+      saldo: increment(-total),
+    });
+  }
+
+  // Efectivo: append al array devoluciones[] de la caja abierta. Optimista:
+  // se lee la caja antes del batch; si otra escritura concurrente modificó el
+  // array entre la lectura y el commit, la pisamos (riesgo aceptable en POS
+  // de un solo cajero). Para el caso multi-cajero conviene runTransaction.
+  if (cajaSnap) {
+    const entrada: DevolucionCaja = {
+      nro,
+      ventaNro: input.ventaNro,
+      monto: total,
+      hora: ahora,
+      motivo: input.motivo || "",
+      vendedor: input.vendedor || "",
+    };
+    batch.update(tdoc(CAJAS, cajaSnap.id), {
+      devoluciones: [...(cajaSnap.devoluciones ?? []), entrada],
+    });
+  }
+
+  await batch.commit();
+
+  invalidarCatalogo();
+  if (input.medioPagoOriginal === "fiado") invalidarClientes();
+  return nro;
+}
+
+// Devoluciones de una venta puntual (orden indefinido, suelen ser 1-2).
+export async function devolucionesDeVenta(ventaNro: string): Promise<Devolucion[]> {
+  const q = query(tcol(DEVOLUCIONES), where("ventaNro", "==", ventaNro));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Devolucion);
+}
+
+// Devoluciones recientes (para mostrar badges en el historial sin N+1).
+export async function ultimasDevoluciones(max = 300): Promise<Devolucion[]> {
+  const q = query(tcol(DEVOLUCIONES), orderBy("creadoEn", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Devolucion);
+}
+
+// Devoluciones en un rango de tiempo (para el cierre de caja y reportes).
+export async function devolucionesEnRango(desde: number, hasta: number): Promise<Devolucion[]> {
+  const q = query(
+    tcol(DEVOLUCIONES),
+    where("creadoEn", ">=", desde),
+    where("creadoEn", "<=", hasta),
+    orderBy("creadoEn", "asc")
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as Devolucion);
+}
+
+export type { Caja, Devolucion, DevolucionCaja, Entrada, LineaEntrada, LineaVenta, Producto, Retiro, Venta };

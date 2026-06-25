@@ -19,6 +19,24 @@ export interface Usuario {
   creadoEn?: number;
 }
 
+// Configuración de la boleta impresa. Todos los flags son OPCIONALES y se
+// tratan como TRUE cuando no están definidos (back-compat: una boleta sin
+// config sigue mostrando todo lo que mostraba antes). Los textos vacíos no
+// se imprimen.
+export interface BoletaConfig {
+  mensajeSuperior?: string; // bajo el header (ej. RUT, dirección extra)
+  mensajeInferior?: string; // antes del "gracias" (ej. política de cambios)
+  textoGracias?: string; // default "¡GRACIAS POR SU COMPRA!"
+  mostrarRubro?: boolean;
+  mostrarUbicacion?: boolean;
+  mostrarWeb?: boolean;
+  mostrarInstagram?: boolean;
+  mostrarQrClub?: boolean;
+  mostrarEslogan?: boolean;
+  mostrarVendedor?: boolean;
+  mostrarMedioPago?: boolean;
+}
+
 export interface Negocio {
   slug: string; // id del documento = subdominio
   nombre: string;
@@ -32,6 +50,7 @@ export interface Negocio {
   logo?: string; // URL o ruta (ej. /logos/kronos.png)
   fondoLogin?: string; // imagen de fondo del login (URL o ruta); vacío = sin fondo
   qrClub?: string; // URL del QR del club; vacío = sin club en la boleta
+  boleta?: BoletaConfig; // qué se muestra en la boleta impresa
   creadoEn?: number;
 }
 

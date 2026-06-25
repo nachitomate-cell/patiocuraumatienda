@@ -19,6 +19,7 @@ import {
   Keyboard,
   UserCircle2,
   Wallet,
+  LogIn,
 } from "lucide-react";
 import { useUiMode } from "@/lib/uimode";
 import { useAtajos } from "@/lib/useAtajos";
@@ -49,6 +50,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [ayuda, setAyuda] = useState(false);
   const [editarVendedor, setEditarVendedor] = useState(false);
 
+  // Hidratación: useVendedor devuelve "" en SSR. Esperamos al primer efecto
+  // para conocer el valor real de localStorage; así evitamos el flash de la
+  // pantalla de ingreso a quienes ya tienen vendedor guardado.
+  const [hidratado, setHidratado] = useState(false);
+  useEffect(() => {
+    setHidratado(true);
+  }, []);
+
   // Atajos globales: Alt+1..9 navega a cada sección; "?" abre la ayuda.
   useAtajos({
     ...Object.fromEntries(
@@ -56,6 +65,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     ),
     "?": () => setAyuda((a) => !a),
   });
+
+  // Mientras hidratamos, no renderizamos nada para no parpadear entre la
+  // pantalla de ingreso y la app.
+  if (!hidratado) return null;
+
+  // Sin vendedor: gate a pantalla completa. Nadie ve la app hasta tipear
+  // su nombre. Salir = vaciar el chip del header (queda en localStorage).
+  if (!vendedor) return <PantallaIngresoVendedor />;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -142,6 +159,76 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
+    </div>
+  );
+}
+
+// Pantalla "panel" de bienvenida que pregunta quién vino a trabajar hoy.
+// Bloquea el acceso al POS hasta que el operador tipea su nombre. El nombre
+// queda en localStorage del dispositivo (mismo storage que el chip del
+// header), así que se mantiene entre sesiones del navegador.
+function PantallaIngresoVendedor() {
+  const NEGOCIO = useNegocio();
+  const [nombre, setNombre] = useState("");
+
+  function ingresar(e: React.FormEvent) {
+    e.preventDefault();
+    const n = nombre.trim();
+    if (!n) return;
+    setVendedor(n);
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-200 p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full anim-pop">
+        <div className="flex flex-col items-center text-center mb-6">
+          <Image
+            src={NEGOCIO.logo}
+            alt={NEGOCIO.nombre}
+            width={88}
+            height={88}
+            className="h-20 w-auto mb-3"
+            priority
+          />
+          <h1 className="text-2xl font-bold text-slate-900">{NEGOCIO.nombre}</h1>
+          {NEGOCIO.eslogan && (
+            <p className="text-[10px] uppercase tracking-[0.25em] text-amber-600 mt-1">
+              {NEGOCIO.eslogan}
+            </p>
+          )}
+        </div>
+
+        <h2 className="text-lg font-semibold text-slate-800">
+          ¿Quién vino a trabajar hoy?
+        </h2>
+        <p className="text-sm text-slate-500 mt-1 mb-4">
+          Escribe tu nombre para entrar. Quedará registrado en las ventas,
+          entradas y devoluciones que hagas en este equipo.
+        </p>
+
+        <form onSubmit={ingresar}>
+          <input
+            autoFocus
+            type="text"
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            placeholder="Ej: Camila"
+            className="w-full border-2 rounded-xl px-4 py-3 text-lg"
+          />
+          <button
+            type="submit"
+            disabled={!nombre.trim()}
+            className="mt-3 w-full bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-xl py-3 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <LogIn size={18} /> Entrar
+          </button>
+        </form>
+
+        <p className="text-[11px] text-slate-400 text-center mt-4">
+          Si te equivocaste de cuenta, después puedes cambiarte desde el chip
+          del encabezado.
+        </p>
+      </div>
     </div>
   );
 }

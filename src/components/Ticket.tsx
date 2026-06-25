@@ -10,11 +10,22 @@ interface Props {
   cliente: string;
   items: LineaVenta[];
   total: number;
+  vendedor?: string;
+  medioPago?: string;
 }
 
-// Boleta termica (80mm). Solo este bloque se imprime (ver globals.css).
-export function Ticket({ nro, fecha, cliente, items, total }: Props) {
+// Boleta térmica (80mm). Solo este bloque se imprime (ver globals.css).
+// Cada línea del header/footer depende de la config en negocios/{slug}.boleta.
+// Si la config no está definida (boleta antigua), se muestran los valores que
+// se mostraban antes (mostrar* === undefined → se trata como TRUE).
+export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago }: Props) {
   const NEGOCIO = useNegocio();
+  const cfg = NEGOCIO.boleta || {};
+  // Helper: TRUE si está activado o no está definido.
+  const on = (v: boolean | undefined) => v !== false;
+
+  const textoGracias = (cfg.textoGracias || "¡GRACIAS POR SU COMPRA!").trim();
+
   return (
     <div
       id="ticket"
@@ -23,17 +34,30 @@ export function Ticket({ nro, fecha, cliente, items, total }: Props) {
     >
       <div className="text-center">
         <div className="font-bold text-sm">{NEGOCIO.nombre.toUpperCase()}</div>
-        {NEGOCIO.rubro && <div>{NEGOCIO.rubro}</div>}
-        {NEGOCIO.ubicacion && <div>📍 {NEGOCIO.ubicacion}</div>}
-        {NEGOCIO.web && <div>{NEGOCIO.web}</div>}
+        {on(cfg.mostrarEslogan) && NEGOCIO.eslogan && (
+          <div className="text-[10px] uppercase tracking-widest">{NEGOCIO.eslogan}</div>
+        )}
+        {on(cfg.mostrarRubro) && NEGOCIO.rubro && <div>{NEGOCIO.rubro}</div>}
+        {on(cfg.mostrarUbicacion) && NEGOCIO.ubicacion && <div>📍 {NEGOCIO.ubicacion}</div>}
+        {on(cfg.mostrarWeb) && NEGOCIO.web && <div>{NEGOCIO.web}</div>}
       </div>
+
+      {cfg.mensajeSuperior && cfg.mensajeSuperior.trim() && (
+        <div className="text-center mt-1 whitespace-pre-line">{cfg.mensajeSuperior.trim()}</div>
+      )}
+
       <div className="my-1">════════════════════════</div>
       <div className="flex justify-between">
         <span>Nro: {nro}</span>
         <span>{fecha}</span>
       </div>
       <div>Cliente: {cliente}</div>
+      {cfg.mostrarVendedor && vendedor && <div>Atiende: {vendedor}</div>}
+      {cfg.mostrarMedioPago && medioPago && (
+        <div className="capitalize">Pago: {medioPago}</div>
+      )}
       <div className="my-1">────────────────────────</div>
+
       <table className="w-full">
         <thead>
           <tr className="text-left">
@@ -52,14 +76,20 @@ export function Ticket({ nro, fecha, cliente, items, total }: Props) {
           ))}
         </tbody>
       </table>
+
       <div className="my-1">════════════════════════</div>
       <div className="flex justify-between font-bold text-sm">
         <span>TOTAL</span>
         <span>{money(total)}</span>
       </div>
       <div className="my-1">════════════════════════</div>
+
+      {cfg.mensajeInferior && cfg.mensajeInferior.trim() && (
+        <div className="text-center mt-1 whitespace-pre-line">{cfg.mensajeInferior.trim()}</div>
+      )}
+
       <div className="text-center mt-2">
-        {NEGOCIO.qrClub && (
+        {on(cfg.mostrarQrClub) && NEGOCIO.qrClub && (
           <>
             <div>📱 Club de Fidelización</div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -71,8 +101,10 @@ export function Ticket({ nro, fecha, cliente, items, total }: Props) {
             <div>¡Escanea y acumula puntos!</div>
           </>
         )}
-        <div className="mt-2">¡GRACIAS POR SU COMPRA!</div>
-        {NEGOCIO.instagram && <div>📷 {NEGOCIO.instagram}</div>}
+        {textoGracias && <div className="mt-2">{textoGracias}</div>}
+        {on(cfg.mostrarInstagram) && NEGOCIO.instagram && (
+          <div>📷 {NEGOCIO.instagram}</div>
+        )}
       </div>
     </div>
   );

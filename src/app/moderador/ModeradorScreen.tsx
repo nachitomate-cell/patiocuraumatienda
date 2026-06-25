@@ -18,6 +18,7 @@ import {
   crearUsuario,
   normalizarSlug,
   type Negocio,
+  type BoletaConfig,
   type Usuario,
   type RolUsuario,
 } from "@/lib/admin";
@@ -335,6 +336,7 @@ function EditarNegocioModal({
   const [eslogan, setEslogan] = useState("");
   const [web, setWeb] = useState("");
   const [instagram, setInstagram] = useState("");
+  const [boleta, setBoleta] = useState<BoletaConfig>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
@@ -350,8 +352,13 @@ function EditarNegocioModal({
     setEslogan(negocio.eslogan || "");
     setWeb(negocio.web || "");
     setInstagram(negocio.instagram || "");
+    setBoleta(negocio.boleta || {});
     setErr("");
   }, [negocio]);
+
+  function setBoletaCampo<K extends keyof BoletaConfig>(k: K, v: BoletaConfig[K]) {
+    setBoleta((b) => ({ ...b, [k]: v }));
+  }
 
   async function guardar() {
     if (!negocio) return;
@@ -368,6 +375,12 @@ function EditarNegocioModal({
         eslogan: eslogan.trim(),
         web: web.trim(),
         instagram: instagram.trim(),
+        boleta: {
+          ...boleta,
+          mensajeSuperior: (boleta.mensajeSuperior || "").trim(),
+          mensajeInferior: (boleta.mensajeInferior || "").trim(),
+          textoGracias: (boleta.textoGracias || "").trim(),
+        },
       });
       await onGuardado();
     } catch (e) {
@@ -430,6 +443,90 @@ function EditarNegocioModal({
         <Campo label="Instagram">
           <input value={instagram} onChange={(e) => setInstagram(e.target.value)} className={inputCls} />
         </Campo>
+      </div>
+
+      {/* ===== Boleta: textos y qué líneas se imprimen ===== */}
+      <div className="mt-5 pt-4 border-t border-slate-100">
+        <h4 className="font-semibold text-slate-800 mb-1">Boleta impresa</h4>
+        <p className="text-xs text-slate-500 mb-3">
+          Controla qué líneas aparecen y agrega textos arriba/abajo del detalle.
+          Lo que dejes en blanco no se imprime.
+        </p>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Campo label="Mensaje superior (bajo el nombre)">
+            <textarea
+              value={boleta.mensajeSuperior || ""}
+              onChange={(e) => setBoletaCampo("mensajeSuperior", e.target.value)}
+              placeholder="Ej: RUT 76.123.456-7&#10;Horario: L-V 10-21 hrs"
+              rows={2}
+              className={inputCls}
+            />
+          </Campo>
+          <Campo label="Mensaje inferior (antes del gracias)">
+            <textarea
+              value={boleta.mensajeInferior || ""}
+              onChange={(e) => setBoletaCampo("mensajeInferior", e.target.value)}
+              placeholder="Ej: Cambios hasta 7 días con boleta"
+              rows={2}
+              className={inputCls}
+            />
+          </Campo>
+          <Campo label='Texto de cierre (default "¡GRACIAS POR SU COMPRA!")'>
+            <input
+              value={boleta.textoGracias || ""}
+              onChange={(e) => setBoletaCampo("textoGracias", e.target.value)}
+              placeholder="¡GRACIAS POR SU COMPRA!"
+              className={inputCls}
+            />
+          </Campo>
+        </div>
+
+        <div className="mt-3 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-sm">
+          <Toggle
+            label="Eslogan"
+            valor={boleta.mostrarEslogan ?? false}
+            onChange={(v) => setBoletaCampo("mostrarEslogan", v)}
+            hint="(default: oculto)"
+          />
+          <Toggle
+            label="Rubro"
+            valor={boleta.mostrarRubro ?? true}
+            onChange={(v) => setBoletaCampo("mostrarRubro", v)}
+          />
+          <Toggle
+            label="Ubicación"
+            valor={boleta.mostrarUbicacion ?? true}
+            onChange={(v) => setBoletaCampo("mostrarUbicacion", v)}
+          />
+          <Toggle
+            label="Web"
+            valor={boleta.mostrarWeb ?? true}
+            onChange={(v) => setBoletaCampo("mostrarWeb", v)}
+          />
+          <Toggle
+            label="Instagram"
+            valor={boleta.mostrarInstagram ?? true}
+            onChange={(v) => setBoletaCampo("mostrarInstagram", v)}
+          />
+          <Toggle
+            label="QR Club de Fidelización"
+            valor={boleta.mostrarQrClub ?? true}
+            onChange={(v) => setBoletaCampo("mostrarQrClub", v)}
+          />
+          <Toggle
+            label="Nombre del vendedor"
+            valor={boleta.mostrarVendedor ?? false}
+            onChange={(v) => setBoletaCampo("mostrarVendedor", v)}
+            hint="(default: oculto)"
+          />
+          <Toggle
+            label="Medio de pago"
+            valor={boleta.mostrarMedioPago ?? false}
+            onChange={(v) => setBoletaCampo("mostrarMedioPago", v)}
+            hint="(default: oculto)"
+          />
+        </div>
       </div>
 
       {(logo.trim() || fondoLogin.trim()) && (
@@ -655,6 +752,31 @@ function Campo({ label, children }: { label: string; children: React.ReactNode }
     <label className="block text-sm">
       <span className="text-slate-600 font-medium">{label}</span>
       <div className="mt-1">{children}</div>
+    </label>
+  );
+}
+
+function Toggle({
+  label,
+  valor,
+  onChange,
+  hint,
+}: {
+  label: string;
+  valor: boolean;
+  onChange: (v: boolean) => void;
+  hint?: string;
+}) {
+  return (
+    <label className="flex items-center gap-2 py-1 cursor-pointer">
+      <input
+        type="checkbox"
+        checked={valor}
+        onChange={(e) => onChange(e.target.checked)}
+        className="w-4 h-4 accent-cyan-600"
+      />
+      <span className="text-slate-700">{label}</span>
+      {hint && <span className="text-xs text-slate-400">{hint}</span>}
     </label>
   );
 }

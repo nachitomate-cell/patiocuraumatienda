@@ -104,6 +104,18 @@ export interface Retiro {
   vendedor: string;
 }
 
+// Snapshot mínimo de una devolución dentro del array caja.devoluciones[].
+// Permite calcular el efectivo esperado del turno sin releer la colección
+// devoluciones en cada render.
+export interface DevolucionCaja {
+  nro: string; // DV-###
+  ventaNro: string;
+  monto: number;
+  hora: number; // epoch ms
+  motivo: string;
+  vendedor: string;
+}
+
 export interface Caja {
   id: string;
   aperturaEn: number; // epoch ms
@@ -113,9 +125,34 @@ export interface Caja {
   fondoInicial: number; // efectivo con que se abre la caja
   umbralRetiro: number; // sobre este saldo de efectivo el POS sugiere retirar
   retiros: Retiro[];
+  // Devoluciones en efectivo del turno (egreso de caja). Solo se llenan cuando
+  // el medio original de la venta era "efectivo".
+  devoluciones?: DevolucionCaja[];
   abridoPor?: string; // nombre del vendedor que abrió
   cerradoPor?: string;
   cierreContado?: number; // efectivo físico contado al cerrar
   diferencia?: number; // contado - esperado (sobrante > 0, faltante < 0)
   notas?: string;
+}
+
+// Devolución de productos: revierte (parcial o totalmente) una venta sin
+// mutarla. Se guarda como documento aparte para no romper el histórico de
+// ventas ni el snapshot de emprendedores. Los efectos se aplican al crearla:
+//  - re-incrementa stock de las líneas con código,
+//  - reduce la deuda del cliente si la venta era fiado,
+//  - asienta el egreso en la caja abierta si era efectivo,
+//  - los medios electrónicos solo dejan registro (chargeback manual).
+export interface Devolucion {
+  nro: string; // DV-###
+  fecha: string; // ISO yyyy-mm-dd
+  creadoEn: number; // epoch ms
+  ventaNro: string; // referencia a la venta original
+  vendedor: string; // quién hizo la devolución
+  motivo: string;
+  items: LineaVenta[]; // misma forma que las líneas de venta
+  total: number;
+  medioPagoOriginal: MedioPago;
+  // Heredados de la venta para revertir su efecto. Vacíos si no aplica.
+  clienteId?: string; // si era fiado, cliente al que se le bajó la deuda
+  cajaId?: string; // si era efectivo, caja en la que se asentó
 }

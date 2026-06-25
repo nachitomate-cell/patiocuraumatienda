@@ -29,7 +29,24 @@ export type Branding = {
   fondoLogin: string; // imagen de fondo de la pantalla de login (opcional)
   qrClub: string;
   slug: string;
+  // Config de la boleta. Todo opcional; cada flag se trata como TRUE cuando
+  // no está definido (defaults seguros: una boleta sin config muestra todo).
+  boleta?: BoletaConfig;
 };
+
+export interface BoletaConfig {
+  mensajeSuperior?: string;
+  mensajeInferior?: string;
+  textoGracias?: string;
+  mostrarRubro?: boolean;
+  mostrarUbicacion?: boolean;
+  mostrarWeb?: boolean;
+  mostrarInstagram?: boolean;
+  mostrarQrClub?: boolean;
+  mostrarEslogan?: boolean;
+  mostrarVendedor?: boolean;
+  mostrarMedioPago?: boolean;
+}
 
 export const NEGOCIO = {
   // Nombre completo: cabecera, boleta, login, mensajes de WhatsApp.
