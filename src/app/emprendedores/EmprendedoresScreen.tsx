@@ -12,12 +12,17 @@ import {
   Trash2,
   X,
   Hash,
+  Pause,
+  Play,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import {
   listarEmprendedores,
   crearEmprendedor,
   actualizarEmprendedor,
   eliminarEmprendedor,
+  setEmprendedorActivo,
   todosLosProductos,
   normalizarPrefijo,
 } from "@/lib/repo";
@@ -50,6 +55,7 @@ export function EmprendedoresScreen() {
   const [copiado, setCopiado] = useState("");
   const [origin, setOrigin] = useState("");
   const [confirmando, setConfirmando] = useState<Emprendedor | null>(null);
+  const [inactivosAbierto, setInactivosAbierto] = useState(false);
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -154,6 +160,27 @@ export function EmprendedoresScreen() {
     }
   }
 
+  // Pausa o reactiva un emprendedor. Inactivos no aparecen en /alta y se
+  // separan en una sección colapsable abajo.
+  async function alternarActivo(e: Emprendedor) {
+    const proximo = e.activo === false; // hoy inactivo -> activarlo
+    setBusy(true);
+    try {
+      await setEmprendedorActivo(e.id, proximo);
+      await cargar();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // activo === undefined cuenta como TRUE (back-compat con docs viejos).
+  const { activos, inactivos } = useMemo(() => {
+    const a: Emprendedor[] = [];
+    const i: Emprendedor[] = [];
+    for (const e of lista) (e.activo === false ? i : a).push(e);
+    return { activos: a, inactivos: i };
+  }, [lista]);
+
   function linkDe(e: Emprendedor) {
     return `${origin}/alta/${e.token}`;
   }
@@ -171,6 +198,145 @@ export function EmprendedoresScreen() {
       `Hola ${e.nombre}, este es tu link para cargar tus productos en ${NEGOCIO.nombre}: ${linkDe(e)}`
     );
     window.open(`https://wa.me/${num}?text=${txt}`, "_blank");
+  }
+
+  // Renderiza una fila de la lista. inactivo=true atenúa los colores y oculta
+  // copiar-link / WhatsApp (no tiene sentido invitarlo a cargar productos).
+  function renderFila(e: Emprendedor, inactivo: boolean) {
+    if (editId === e.id) {
+      return (
+        <li key={e.id} className="border-2 border-cyan-300 rounded-lg p-3 anim-pop">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-[1fr_auto_1fr_1fr] gap-2">
+            <input
+              value={edNombre}
+              onChange={(ev) => setEdNombre(ev.target.value)}
+              placeholder="Nombre / marca"
+              className="border rounded-lg px-3 py-2"
+            />
+            <input
+              value={edPrefijo}
+              onChange={(ev) => setEdPrefijo(ev.target.value.toUpperCase())}
+              placeholder="Inicial"
+              autoCapitalize="characters"
+              autoCorrect="off"
+              spellCheck={false}
+              className="border rounded-lg px-3 py-2 font-mono uppercase w-full sm:w-28"
+            />
+            <input
+              value={edContacto}
+              onChange={(ev) => setEdContacto(ev.target.value)}
+              placeholder="Contacto"
+              className="border rounded-lg px-3 py-2"
+            />
+            <input
+              value={edTelefono}
+              onChange={(ev) => setEdTelefono(ev.target.value)}
+              placeholder="Teléfono"
+              className="border rounded-lg px-3 py-2"
+            />
+          </div>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={guardarEdicion}
+              disabled={busy}
+              className="flex items-center gap-1.5 bg-emerald-600 text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              <Check size={16} /> Guardar
+            </button>
+            <button
+              onClick={() => setEditId(null)}
+              className="flex items-center gap-1.5 border border-slate-300 rounded-lg px-4 py-2 text-sm font-semibold hover:bg-slate-100"
+            >
+              <X size={16} /> Cancelar
+            </button>
+          </div>
+        </li>
+      );
+    }
+
+    return (
+      <li
+        key={e.id}
+        className={`border rounded-lg p-3 ${
+          inactivo ? "bg-slate-50 opacity-80" : ""
+        }`}
+      >
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="min-w-0">
+            <div className="font-semibold text-slate-800 flex items-center gap-2">
+              {e.nombre}
+              {inactivo && (
+                <span className="text-[10px] uppercase tracking-wide bg-slate-300 text-slate-700 rounded px-1.5 py-0.5">
+                  inactivo
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-slate-500 flex items-center gap-1 flex-wrap">
+              <span className="inline-flex items-center gap-0.5 bg-slate-100 text-slate-700 rounded px-1.5 py-0.5 font-mono">
+                <Hash size={11} />
+                {e.prefijo}
+              </span>
+              · {conteoPorPrefijo.get(e.prefijo) ?? 0} producto(s) en stock
+              {e.contacto ? ` · ${e.contacto}` : ""}
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {!inactivo && (
+              <>
+                <button
+                  onClick={() => copiar(e)}
+                  className="flex items-center gap-1.5 bg-cyan-600 text-white rounded-lg px-3 py-2 text-sm font-semibold"
+                >
+                  {copiado === e.id ? <Check size={16} /> : <Copy size={16} />}
+                  {copiado === e.id ? "¡Copiado!" : "Copiar link"}
+                </button>
+                {e.telefono && (
+                  <button
+                    onClick={() => whatsapp(e)}
+                    className="flex items-center gap-1.5 bg-emerald-600 text-white rounded-lg px-3 py-2 text-sm font-semibold"
+                  >
+                    <MessageCircle size={16} /> Enviar
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              onClick={() => iniciarEdicion(e)}
+              className="flex items-center gap-1.5 border border-slate-300 text-slate-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-slate-100"
+            >
+              <Pencil size={16} /> Editar
+            </button>
+            <button
+              onClick={() => alternarActivo(e)}
+              disabled={busy}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50 ${
+                inactivo
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  : "border border-amber-300 text-amber-700 hover:bg-amber-50"
+              }`}
+              title={inactivo ? "Reactivar emprendedor" : "Pausar (marcar como inactivo)"}
+            >
+              {inactivo ? <Play size={16} /> : <Pause size={16} />}
+              {inactivo ? "Reactivar" : "Pausar"}
+            </button>
+            <button
+              onClick={() => setConfirmando(e)}
+              disabled={busy}
+              className="flex items-center gap-1.5 border border-red-300 text-red-600 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
+              aria-label="Eliminar"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+        {!inactivo && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500 break-all">
+            <Link2 size={14} className="shrink-0" />
+            {linkDe(e)}
+          </div>
+        )}
+      </li>
+    );
   }
 
   return (
@@ -232,119 +398,46 @@ export function EmprendedoresScreen() {
         )}
       </div>
 
-      {/* Lista */}
+      {/* Lista de activos */}
       <div className="bg-white rounded-xl shadow p-4 anim-in">
-        <h2 className="font-semibold text-slate-800 mb-3">Emprendedores ({lista.length})</h2>
+        <h2 className="font-semibold text-slate-800 mb-3">
+          Emprendedores activos ({activos.length})
+        </h2>
         {cargando && <div className="text-slate-400 py-4 text-center">Cargando…</div>}
-        {!cargando && lista.length === 0 && (
-          <div className="text-slate-400 py-4 text-center">Aún no hay emprendedores</div>
+        {!cargando && activos.length === 0 && (
+          <div className="text-slate-400 py-4 text-center">
+            No hay emprendedores activos
+          </div>
         )}
-        <ul className="space-y-3">
-          {lista.map((e) =>
-            editId === e.id ? (
-              /* ----- Modo edición ----- */
-              <li key={e.id} className="border-2 border-cyan-300 rounded-lg p-3 anim-pop">
-                <div className="grid sm:grid-cols-2 lg:grid-cols-[1fr_auto_1fr_1fr] gap-2">
-                  <input
-                    value={edNombre}
-                    onChange={(ev) => setEdNombre(ev.target.value)}
-                    placeholder="Nombre / marca"
-                    className="border rounded-lg px-3 py-2"
-                  />
-                  <input
-                    value={edPrefijo}
-                    onChange={(ev) => setEdPrefijo(ev.target.value.toUpperCase())}
-                    placeholder="Inicial"
-                    autoCapitalize="characters"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className="border rounded-lg px-3 py-2 font-mono uppercase w-full sm:w-28"
-                  />
-                  <input
-                    value={edContacto}
-                    onChange={(ev) => setEdContacto(ev.target.value)}
-                    placeholder="Contacto"
-                    className="border rounded-lg px-3 py-2"
-                  />
-                  <input
-                    value={edTelefono}
-                    onChange={(ev) => setEdTelefono(ev.target.value)}
-                    placeholder="Teléfono"
-                    className="border rounded-lg px-3 py-2"
-                  />
-                </div>
-                <div className="flex gap-2 mt-2">
-                  <button
-                    onClick={guardarEdicion}
-                    disabled={busy}
-                    className="flex items-center gap-1.5 bg-emerald-600 text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
-                  >
-                    <Check size={16} /> Guardar
-                  </button>
-                  <button
-                    onClick={() => setEditId(null)}
-                    className="flex items-center gap-1.5 border border-slate-300 rounded-lg px-4 py-2 text-sm font-semibold hover:bg-slate-100"
-                  >
-                    <X size={16} /> Cancelar
-                  </button>
-                </div>
-              </li>
-            ) : (
-              /* ----- Vista normal ----- */
-              <li key={e.id} className="border rounded-lg p-3">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="min-w-0">
-                    <div className="font-semibold text-slate-800">{e.nombre}</div>
-                    <div className="text-xs text-slate-500 flex items-center gap-1 flex-wrap">
-                      <span className="inline-flex items-center gap-0.5 bg-slate-100 text-slate-700 rounded px-1.5 py-0.5 font-mono">
-                        <Hash size={11} />
-                        {e.prefijo}
-                      </span>
-                      · {conteoPorPrefijo.get(e.prefijo) ?? 0} producto(s) en stock
-                      {e.contacto ? ` · ${e.contacto}` : ""}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      onClick={() => copiar(e)}
-                      className="flex items-center gap-1.5 bg-cyan-600 text-white rounded-lg px-3 py-2 text-sm font-semibold"
-                    >
-                      {copiado === e.id ? <Check size={16} /> : <Copy size={16} />}
-                      {copiado === e.id ? "¡Copiado!" : "Copiar link"}
-                    </button>
-                    {e.telefono && (
-                      <button
-                        onClick={() => whatsapp(e)}
-                        className="flex items-center gap-1.5 bg-emerald-600 text-white rounded-lg px-3 py-2 text-sm font-semibold"
-                      >
-                        <MessageCircle size={16} /> Enviar
-                      </button>
-                    )}
-                    <button
-                      onClick={() => iniciarEdicion(e)}
-                      className="flex items-center gap-1.5 border border-slate-300 text-slate-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-slate-100"
-                    >
-                      <Pencil size={16} /> Editar
-                    </button>
-                    <button
-                      onClick={() => setConfirmando(e)}
-                      disabled={busy}
-                      className="flex items-center gap-1.5 border border-red-300 text-red-600 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-red-50 disabled:opacity-50"
-                      aria-label="Eliminar"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-500 break-all">
-                  <Link2 size={14} className="shrink-0" />
-                  {linkDe(e)}
-                </div>
-              </li>
-            )
-          )}
-        </ul>
+        <ul className="space-y-3">{activos.map((e) => renderFila(e, false))}</ul>
       </div>
+
+      {/* Sección de inactivos: colapsable y silenciada visualmente. */}
+      {inactivos.length > 0 && (
+        <div className="bg-white rounded-xl shadow anim-in">
+          <button
+            onClick={() => setInactivosAbierto((a) => !a)}
+            className="w-full px-4 py-3 flex items-center justify-between text-left"
+          >
+            <span className="font-semibold text-slate-700 flex items-center gap-2">
+              {inactivosAbierto ? (
+                <ChevronDown size={18} />
+              ) : (
+                <ChevronRight size={18} />
+              )}
+              Inactivos ({inactivos.length})
+            </span>
+            <span className="text-xs text-slate-500">
+              No reciben link nuevo · sus productos quedan en stock
+            </span>
+          </button>
+          {inactivosAbierto && (
+            <div className="border-t border-slate-100 p-4">
+              <ul className="space-y-3">{inactivos.map((e) => renderFila(e, true))}</ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Confirmación de borrado (modal nativo) */}
       <Modal

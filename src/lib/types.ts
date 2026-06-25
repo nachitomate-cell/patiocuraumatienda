@@ -11,6 +11,11 @@ export interface Producto {
 }
 
 // Emprendedor que deja productos en consignación.
+// activo: cuando es false (o "inactivo" explícito) el emprendedor no aparece
+// con su link en el flujo normal: no puede cargar nuevos productos desde
+// /alta/{token}, ni recibe sales attribution mostrada como activa. Sus
+// productos del catálogo NO se borran — son historia y siguen vendiéndose.
+// activo === undefined se trata como TRUE (back-compat con docs antiguos).
 export interface Emprendedor {
   id: string;
   nombre: string;
@@ -19,6 +24,7 @@ export interface Emprendedor {
   token: string; // para el link individual /alta/{token}
   prefijo: string; // prefijo de código de sus productos (ej: MAR)
   productosCount: number;
+  activo?: boolean;
   creadoEn: number;
 }
 
@@ -38,6 +44,17 @@ export interface LineaVenta {
 
 export type MedioPago = "efectivo" | "debito" | "credito" | "transferencia" | "fiado";
 
+// Una venta anulada se marca con este bloque: NO se borra el documento (las
+// boletas correlativas no pueden saltar números y queremos auditoría).
+// Cuando "anulada" existe la venta cuenta como invalidada: el stock fue
+// devuelto, la deuda fiado fue abonada y, si era efectivo, hubo egreso de
+// caja por el total.
+export interface AnulacionInfo {
+  en: number; // epoch ms
+  por: string; // vendedor que la anuló
+  motivo: string;
+}
+
 export interface Venta {
   nro: string;
   fecha: string; // ISO yyyy-mm-dd
@@ -49,6 +66,7 @@ export interface Venta {
   medioPago?: MedioPago;
   clienteId?: string; // referencia al cliente del fiado
   clienteNombre?: string;
+  anulada?: AnulacionInfo;
 }
 
 // Cliente del cuaderno de fiados.

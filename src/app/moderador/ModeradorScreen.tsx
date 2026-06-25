@@ -22,7 +22,9 @@ import {
   type Usuario,
   type RolUsuario,
 } from "@/lib/admin";
+import { getBoletaConfig, guardarBoletaConfig } from "@/lib/repo";
 import { Modal } from "@/components/Modal";
+import { BoletaEditor } from "@/components/BoletaEditor";
 
 type Acceso = "verificando" | "necesita-login" | "denegado" | "ok";
 
@@ -341,6 +343,8 @@ function EditarNegocioModal({
   const [err, setErr] = useState("");
 
   // Carga los valores actuales cada vez que se abre con un negocio distinto.
+  // La boleta vive ahora en un sub-doc (negocios/{slug}/config/boleta) para
+  // permitir edición desde el POS; con fallback al campo legacy del negocio.
   useEffect(() => {
     if (!negocio) return;
     setNombre(negocio.nombre || "");
@@ -352,13 +356,11 @@ function EditarNegocioModal({
     setEslogan(negocio.eslogan || "");
     setWeb(negocio.web || "");
     setInstagram(negocio.instagram || "");
-    setBoleta(negocio.boleta || {});
     setErr("");
+    getBoletaConfig(negocio.slug)
+      .then((b) => setBoleta(b || negocio.boleta || {}))
+      .catch(() => setBoleta(negocio.boleta || {}));
   }, [negocio]);
-
-  function setBoletaCampo<K extends keyof BoletaConfig>(k: K, v: BoletaConfig[K]) {
-    setBoleta((b) => ({ ...b, [k]: v }));
-  }
 
   async function guardar() {
     if (!negocio) return;
@@ -375,12 +377,6 @@ function EditarNegocioModal({
         eslogan: eslogan.trim(),
         web: web.trim(),
         instagram: instagram.trim(),
-        boleta: {
-          ...boleta,
-          mensajeSuperior: (boleta.mensajeSuperior || "").trim(),
-          mensajeInferior: (boleta.mensajeInferior || "").trim(),
-          textoGracias: (boleta.textoGracias || "").trim(),
-        },
       });
       await onGuardado();
     } catch (e) {
@@ -388,6 +384,15 @@ function EditarNegocioModal({
     } finally {
       setBusy(false);
     }
+  }
+
+  // La boleta se guarda aparte (sub-doc): así un moderador puede tocar
+  // branding y boleta independientemente, y el botón inferior solo aplica
+  // al branding (boleta tiene su propio botón en el editor).
+  async function guardarBoleta(cfg: BoletaConfig) {
+    if (!negocio) return;
+    await guardarBoletaConfig(negocio.slug, cfg);
+    setBoleta(cfg);
   }
 
   return (
@@ -449,84 +454,10 @@ function EditarNegocioModal({
       <div className="mt-5 pt-4 border-t border-slate-100">
         <h4 className="font-semibold text-slate-800 mb-1">Boleta impresa</h4>
         <p className="text-xs text-slate-500 mb-3">
-          Controla qué líneas aparecen y agrega textos arriba/abajo del detalle.
-          Lo que dejes en blanco no se imprime.
+          Esta sección se guarda APARTE del branding (sub-doc del negocio):
+          tiene su propio botón. Lo que dejes en blanco no se imprime.
         </p>
-
-        <div className="grid sm:grid-cols-2 gap-3">
-          <Campo label="Mensaje superior (bajo el nombre)">
-            <textarea
-              value={boleta.mensajeSuperior || ""}
-              onChange={(e) => setBoletaCampo("mensajeSuperior", e.target.value)}
-              placeholder="Ej: RUT 76.123.456-7&#10;Horario: L-V 10-21 hrs"
-              rows={2}
-              className={inputCls}
-            />
-          </Campo>
-          <Campo label="Mensaje inferior (antes del gracias)">
-            <textarea
-              value={boleta.mensajeInferior || ""}
-              onChange={(e) => setBoletaCampo("mensajeInferior", e.target.value)}
-              placeholder="Ej: Cambios hasta 7 días con boleta"
-              rows={2}
-              className={inputCls}
-            />
-          </Campo>
-          <Campo label='Texto de cierre (default "¡GRACIAS POR SU COMPRA!")'>
-            <input
-              value={boleta.textoGracias || ""}
-              onChange={(e) => setBoletaCampo("textoGracias", e.target.value)}
-              placeholder="¡GRACIAS POR SU COMPRA!"
-              className={inputCls}
-            />
-          </Campo>
-        </div>
-
-        <div className="mt-3 grid sm:grid-cols-2 gap-x-4 gap-y-1 text-sm">
-          <Toggle
-            label="Eslogan"
-            valor={boleta.mostrarEslogan ?? false}
-            onChange={(v) => setBoletaCampo("mostrarEslogan", v)}
-            hint="(default: oculto)"
-          />
-          <Toggle
-            label="Rubro"
-            valor={boleta.mostrarRubro ?? true}
-            onChange={(v) => setBoletaCampo("mostrarRubro", v)}
-          />
-          <Toggle
-            label="Ubicación"
-            valor={boleta.mostrarUbicacion ?? true}
-            onChange={(v) => setBoletaCampo("mostrarUbicacion", v)}
-          />
-          <Toggle
-            label="Web"
-            valor={boleta.mostrarWeb ?? true}
-            onChange={(v) => setBoletaCampo("mostrarWeb", v)}
-          />
-          <Toggle
-            label="Instagram"
-            valor={boleta.mostrarInstagram ?? true}
-            onChange={(v) => setBoletaCampo("mostrarInstagram", v)}
-          />
-          <Toggle
-            label="QR Club de Fidelización"
-            valor={boleta.mostrarQrClub ?? true}
-            onChange={(v) => setBoletaCampo("mostrarQrClub", v)}
-          />
-          <Toggle
-            label="Nombre del vendedor"
-            valor={boleta.mostrarVendedor ?? false}
-            onChange={(v) => setBoletaCampo("mostrarVendedor", v)}
-            hint="(default: oculto)"
-          />
-          <Toggle
-            label="Medio de pago"
-            valor={boleta.mostrarMedioPago ?? false}
-            onChange={(v) => setBoletaCampo("mostrarMedioPago", v)}
-            hint="(default: oculto)"
-          />
-        </div>
+        <BoletaEditor inicial={boleta} onGuardar={guardarBoleta} textoBoton="Guardar boleta" />
       </div>
 
       {(logo.trim() || fondoLogin.trim()) && (
@@ -756,30 +687,6 @@ function Campo({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Toggle({
-  label,
-  valor,
-  onChange,
-  hint,
-}: {
-  label: string;
-  valor: boolean;
-  onChange: (v: boolean) => void;
-  hint?: string;
-}) {
-  return (
-    <label className="flex items-center gap-2 py-1 cursor-pointer">
-      <input
-        type="checkbox"
-        checked={valor}
-        onChange={(e) => onChange(e.target.checked)}
-        className="w-4 h-4 accent-cyan-600"
-      />
-      <span className="text-slate-700">{label}</span>
-      {hint && <span className="text-xs text-slate-400">{hint}</span>}
-    </label>
-  );
-}
 
 function Mensaje({ msg }: { msg: { tipo: "ok" | "error"; texto: string } }) {
   return (

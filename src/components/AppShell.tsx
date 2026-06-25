@@ -20,6 +20,7 @@ import {
   UserCircle2,
   Wallet,
   LogIn,
+  Receipt,
 } from "lucide-react";
 import { useUiMode } from "@/lib/uimode";
 import { useAtajos } from "@/lib/useAtajos";
@@ -38,6 +39,7 @@ const NAV = [
   { href: "/emprendedores", label: "Emprendedores", Icon: Store },
   { href: "/crm", label: "CRM", Icon: BarChart3 },
   { href: "/historial", label: "Historial", Icon: History },
+  { href: "/boleta", label: "Boleta", Icon: Receipt },
   { href: "/admin", label: "Admin", Icon: Settings },
 ];
 

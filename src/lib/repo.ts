@@ -19,6 +19,7 @@ import { getDb } from "./firebase";
 import { getNegocioId, onCambioNegocio } from "./tenant";
 import {
   subtotalLinea,
+  type AnulacionInfo,
   type Caja,
   type Cliente,
   type Devolucion,
@@ -32,6 +33,7 @@ import {
   type Retiro,
   type Venta,
 } from "./types";
+import type { BoletaConfig } from "./negocio";
 
 const NEGOCIOS = "negocios";
 const PRODUCTOS = "productos";
@@ -523,6 +525,13 @@ export async function eliminarEmprendedor(id: string): Promise<void> {
   await deleteDoc(tdoc(EMPRENDEDORES, id));
 }
 
+// Marca un emprendedor como activo o inactivo. Inactivo: NO puede cargar más
+// productos desde /alta/{token} y se separa visualmente en /emprendedores.
+// Sus productos en el catálogo siguen vivos (no se tocan).
+export async function setEmprendedorActivo(id: string, activo: boolean): Promise<void> {
+  await setDoc(tdoc(EMPRENDEDORES, id), { activo }, { merge: true });
+}
+
 export async function getEmprendedorPorToken(
   token: string
 ): Promise<Emprendedor | null> {
@@ -560,10 +569,101 @@ export async function agregarProductoEmprendedor(
   return codigo;
 }
 
-export async function productosDeEmprendedor(empId: string): Promise<Producto[]> {
-  const q = query(tcol(PRODUCTOS), where("emprendedorId", "==", empId));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => d.data() as Producto);
+// Productos de un emprendedor. Hace DOS lecturas y deduplica:
+//  1) por campo emprendedorId (productos nuevos, estampados en alta).
+//  2) por prefijo del código (productos legacy que jamás tuvieron el campo:
+//     por la migración inicial el catálogo no traía emprendedorId; el doc
+//     emprendedor se creó después, así que la query por campo devuelve 0).
+// Tomar la unión permite que un emprendedor recién enrolado vea sus productos
+// históricos al toque, sin necesidad de un backfill separado.
+export async function productosDeEmprendedor(
+  emp: { id: string; prefijo: string }
+): Promise<Producto[]> {
+  // Truco de prefix match en Firestore: rango [start, end] cubre todo lo que
+  // empieza con `${prefijo}-`. end usa 0xF8FF como sentinel, mayor que
+  // cualquier carácter ASCII normal.
+  const start = `${emp.prefijo}-`;
+  const end = `${emp.prefijo}-${String.fromCharCode(0xf8ff)}`;
+  const [porIdSnap, porPrefijoSnap] = await Promise.all([
+    getDocs(query(tcol(PRODUCTOS), where("emprendedorId", "==", emp.id))),
+    getDocs(
+      query(tcol(PRODUCTOS), where("codigo", ">=", start), where("codigo", "<=", end))
+    ),
+  ]);
+  const map = new Map<string, Producto>();
+  for (const d of porIdSnap.docs) {
+    const p = d.data() as Producto;
+    map.set(p.codigo, p);
+  }
+  for (const d of porPrefijoSnap.docs) {
+    const p = d.data() as Producto;
+    if (!map.has(p.codigo)) map.set(p.codigo, p);
+  }
+  return Array.from(map.values());
+}
+
+
+// Actualiza campos editables (precio/stock/descripción) de un producto del
+// emprendedor desde el flujo /alta/{token}. Valida que el producto pertenezca
+// al emprendedor: las reglas de Firestore aceptan escritura de cualquier
+// signedIn anónimo, así que esta verificación es defensa en profundidad
+// contra bugs de UI, no contra atacantes (un atacante con curl haría lo mismo).
+export async function actualizarProductoEmprendedor(
+  empId: string,
+  codigo: string,
+  cambios: { precio?: number; stockActual?: number; descripcion?: string }
+): Promise<void> {
+  const cod = codigo.trim();
+  if (!cod) throw new Error("Falta el código del producto.");
+  const ref = tdoc(PRODUCTOS, cod);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("El producto no existe.");
+  const p = snap.data() as Producto;
+  if (p.emprendedorId !== empId) {
+    throw new Error("Este producto no pertenece a este emprendedor.");
+  }
+  const limpio: Record<string, unknown> = {};
+  if (cambios.descripcion !== undefined) {
+    const d = cambios.descripcion.trim();
+    if (!d) throw new Error("La descripción no puede quedar vacía.");
+    limpio.descripcion = d;
+  }
+  if (cambios.precio !== undefined) {
+    limpio.precio = Math.max(0, Math.round(cambios.precio || 0));
+  }
+  if (cambios.stockActual !== undefined) {
+    limpio.stockActual = Math.max(0, Math.round(cambios.stockActual || 0));
+  }
+  if (Object.keys(limpio).length === 0) return;
+  await setDoc(ref, limpio, { merge: true });
+  parchearProducto(cod, limpio as Partial<Producto>);
+}
+
+// Ventas que tienen al menos una línea de este emprendedor (filtra las
+// líneas para devolver solo lo del emprendedor). Lee las últimas N ventas y
+// filtra cliente-side: suficiente para un POS chico; si crece, conviene una
+// segunda colección indexada por emprendedor o un campo emprendedorIds en la
+// venta (array) con un índice.
+//
+// Doble match (igual que productosDeEmprendedor): el emprendedorId estampado
+// en la línea, O el prefijo del código. Esto cubre las ventas históricas
+// hechas antes de que existiera el doc del emprendedor.
+export async function ventasDeEmprendedor(
+  emp: { id: string; prefijo: string },
+  max = 500
+): Promise<Venta[]> {
+  const vs = await ultimasVentas(max);
+  const pref = `${emp.prefijo}-`;
+  return vs
+    .map((v) => ({
+      ...v,
+      items: v.items.filter(
+        (l) =>
+          l.emprendedorId === emp.id ||
+          (!!l.codigo && l.codigo.startsWith(pref))
+      ),
+    }))
+    .filter((v) => v.items.length > 0);
 }
 
 export async function ultimasVentas(max = 20): Promise<Venta[]> {
@@ -600,6 +700,39 @@ export async function guardarMetaDiaria(diaria: number): Promise<void> {
     { diaria: Math.max(0, Math.round(diaria || 0)), actualizado: Date.now() },
     { merge: true }
   );
+}
+
+// ===== Configuración de la boleta =====
+// Vive como sub-doc del negocio (negocios/{slug}/config/boleta) en vez del doc
+// negocios/{slug}, para que cualquier usuario signedIn (anónimo del POS) pueda
+// editarla. El doc del negocio en sí queda restringido a moderador en las
+// reglas (branding, logo: vandalismo > comodidad).
+//
+// Compatibilidad hacia atrás: si el doc del negocio aún trae boleta inline
+// (datos viejos), negocio-context.tsx lo usa como fallback.
+export async function getBoletaConfig(slug: string): Promise<BoletaConfig | null> {
+  const ref = doc(getDb(), NEGOCIOS, slug, CONFIG, "boleta");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return snap.data() as BoletaConfig;
+}
+
+export async function guardarBoletaConfig(slug: string, cfg: BoletaConfig): Promise<void> {
+  const limpio: Record<string, unknown> = { ...cfg };
+  if (typeof limpio.mensajeSuperior === "string") {
+    limpio.mensajeSuperior = (limpio.mensajeSuperior as string).trim();
+  }
+  if (typeof limpio.mensajeInferior === "string") {
+    limpio.mensajeInferior = (limpio.mensajeInferior as string).trim();
+  }
+  if (typeof limpio.textoGracias === "string") {
+    limpio.textoGracias = (limpio.textoGracias as string).trim();
+  }
+  // Firestore no acepta undefined: limpio.
+  for (const k of Object.keys(limpio)) {
+    if (limpio[k] === undefined) delete limpio[k];
+  }
+  await setDoc(doc(getDb(), NEGOCIOS, slug, CONFIG, "boleta"), limpio, { merge: true });
 }
 
 // Correlativo EN-### para documentos de entrada.
@@ -748,6 +881,94 @@ export async function ultimasCajas(max = 30): Promise<Caja[]> {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Caja, "id">) }));
 }
 
+// ===== Anulación de venta =====
+// Distinta de la devolución: anula la venta entera (típicamente por error
+// del cajero) en lugar de revertir productos puntuales. No borra el documento
+// (los correlativos quedan); le pone un bloque "anulada" y revierte todos
+// los efectos colaterales en el mismo batch:
+//  - re-incrementa stock de las líneas con código,
+//  - si era fiado: abona la deuda del cliente por el total,
+//  - si era efectivo: egresa AN-NV-XXX en la caja abierta (igual estructura
+//    que una devolución: comparten el array devoluciones[] de la caja).
+//
+// Lanza error si: la venta ya está anulada, tiene devoluciones previas (que
+// las gestione el llamador), o era efectivo y no hay caja abierta.
+export async function anularVenta(
+  venta: Venta,
+  motivo: string,
+  vendedor: string
+): Promise<void> {
+  if (venta.anulada) throw new Error("Esta venta ya está anulada.");
+  const tieneDev = await devolucionesDeVenta(venta.nro);
+  if (tieneDev.length > 0) {
+    throw new Error(
+      "Esta venta tiene devoluciones registradas. Anular no es posible: revierte las devoluciones primero o trabaja sólo con devoluciones."
+    );
+  }
+
+  let cajaSnap: Caja | null = null;
+  if (venta.medioPago === "efectivo") {
+    cajaSnap = await cajaAbierta();
+    if (!cajaSnap) {
+      throw new Error("Para anular una venta en efectivo primero abre la caja.");
+    }
+  }
+  if (venta.medioPago === "fiado" && !venta.clienteId) {
+    throw new Error("La venta a fiado no tiene cliente asociado: no se puede revertir la deuda.");
+  }
+
+  const ahora = Date.now();
+  const db = getDb();
+  const batch = writeBatch(db);
+
+  const info: AnulacionInfo = {
+    en: ahora,
+    por: vendedor || "",
+    motivo: (motivo || "").trim(),
+  };
+  batch.update(tdoc(VENTAS, venta.nro), { anulada: info });
+
+  // Reingresa stock por línea (los manuales no tienen producto en catálogo).
+  for (const l of venta.items) {
+    if (l.manual || !l.codigo) continue;
+    batch.update(tdoc(PRODUCTOS, l.codigo), {
+      stockActual: increment(l.cantidad),
+    });
+  }
+
+  if (venta.medioPago === "fiado" && venta.clienteId) {
+    batch.set(doc(tcol(CLIENTES, venta.clienteId, "movimientos")), {
+      tipo: "abono",
+      monto: venta.total,
+      fecha: hoy(),
+      ventaNro: venta.nro,
+      nota: `Anulación ${venta.nro}`,
+      creadoEn: ahora,
+    });
+    batch.update(tdoc(CLIENTES, venta.clienteId), {
+      saldo: increment(-venta.total),
+    });
+  }
+
+  if (cajaSnap) {
+    const entrada: DevolucionCaja = {
+      nro: `AN-${venta.nro}`,
+      ventaNro: venta.nro,
+      monto: venta.total,
+      hora: ahora,
+      motivo: `Anulación: ${info.motivo}`,
+      vendedor: vendedor || "",
+    };
+    batch.update(tdoc(CAJAS, cajaSnap.id), {
+      devoluciones: [...(cajaSnap.devoluciones ?? []), entrada],
+    });
+  }
+
+  await batch.commit();
+  invalidarCatalogo();
+  if (venta.medioPago === "fiado") invalidarClientes();
+}
+
 // ===== Devoluciones =====
 // Una devolución es un documento aparte que referencia la venta original
 // (ventaNro). NUNCA mutamos la venta: las comisiones, el historial y los
@@ -802,13 +1023,19 @@ export async function registrarDevolucion(
   const db = getDb();
   const batch = writeBatch(db);
 
-  const devolucion: Devolucion = {
+  // Firestore rechaza valores undefined. clienteId puede llegar undefined
+  // cuando la venta no era a fiado: limpiamos las keys con valor undefined
+  // antes de persistir, en vez de forzar null/empty (mantenemos el optional).
+  const devolucion: Record<string, unknown> = {
     ...input,
     nro,
     total,
     creadoEn: ahora,
     cajaId: cajaSnap?.id ?? "",
   };
+  for (const k of Object.keys(devolucion)) {
+    if (devolucion[k] === undefined) delete devolucion[k];
+  }
   batch.set(tdoc(DEVOLUCIONES, nro), devolucion);
 
   // Reingresa stock por línea (los manuales no tienen producto en catálogo).

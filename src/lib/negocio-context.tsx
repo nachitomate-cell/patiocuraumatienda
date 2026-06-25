@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { type Branding } from "./negocio";
 import { subdominioDeNegocio } from "./tenant";
 import { getNegocio } from "./admin";
+import { getBoletaConfig } from "./repo";
 import { useAuth } from "./auth";
 
 // Marca del negocio activo, cargada desde el documento negocios/{slug} en
@@ -41,8 +42,11 @@ export function NegocioProvider({ children }: { children: ReactNode }) {
     const slug = subdominioDeNegocio();
     // Espera a tener sesión (anónima o real): Firestore exige auth para leer.
     if (!slug || !user) return;
-    getNegocio(slug)
-      .then((n) => {
+    // Branding + boleta en paralelo. La boleta vive en sub-doc para que se
+    // pueda editar desde el POS (sin moderador); si no existe, hace fallback
+    // al campo legacy negocios/{slug}.boleta.
+    Promise.all([getNegocio(slug), getBoletaConfig(slug).catch(() => null)])
+      .then(([n, boletaSub]) => {
         if (!n) return;
         setBranding({
           nombre: n.nombre || slug,
@@ -57,7 +61,7 @@ export function NegocioProvider({ children }: { children: ReactNode }) {
           fondoLogin: n.fondoLogin || "",
           qrClub: n.qrClub || "",
           slug: n.slug || slug,
-          boleta: n.boleta,
+          boleta: boletaSub || n.boleta,
         });
       })
       .catch(() => {

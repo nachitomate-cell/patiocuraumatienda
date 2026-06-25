@@ -592,7 +592,7 @@ function construirGrupos(
               primerEmprendedor = es[0] ? { id: es[0].id, prefijo: es[0].prefijo } : null;
             }
             if (!primerEmprendedor) return saltar("Sin emprendedores para probar");
-            const ps = await productosDeEmprendedor(primerEmprendedor.id);
+            const ps = await productosDeEmprendedor(primerEmprendedor);
             return ok(`${ps.length} productos del emprendedor ${primerEmprendedor.prefijo}`);
           },
         },

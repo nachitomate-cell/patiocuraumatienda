@@ -17,6 +17,7 @@ import {
   CalendarDays,
   CalendarRange,
   Printer,
+  Ban,
 } from "lucide-react";
 import { Ticket } from "@/components/Ticket";
 import * as XLSX from "xlsx";
@@ -24,6 +25,7 @@ import {
   ultimasVentas,
   ultimasDevoluciones,
   registrarDevolucion,
+  anularVenta,
   cajaAbierta,
   ventasEnRango,
   devolucionesEnRango,
@@ -53,6 +55,7 @@ export function HistorialScreen() {
   const [abierta, setAbierta] = useState<string | null>(null);
   const [devolver, setDevolver] = useState<Venta | null>(null);
   const [imprimir, setImprimir] = useState<Venta | null>(null);
+  const [anular, setAnular] = useState<Venta | null>(null);
   const [descargando, setDescargando] = useState<"diario" | "semanal" | null>(null);
   const [reporteErr, setReporteErr] = useState("");
 
@@ -103,14 +106,20 @@ export function HistorialScreen() {
   const resumen = useMemo(() => {
     let total = 0,
       unidades = 0,
-      devuelto = 0;
+      devuelto = 0,
+      anulado = 0,
+      nAnuladas = 0;
     for (const v of filtradas) {
       total += v.total || 0;
       unidades += v.items.reduce((s, l) => s + l.cantidad, 0);
       const devs = devolucionesPorVenta.get(v.nro) || [];
       for (const d of devs) devuelto += d.total || 0;
+      if (v.anulada) {
+        anulado += v.total || 0;
+        nAnuladas++;
+      }
     }
-    return { total, unidades, n: filtradas.length, devuelto };
+    return { total, unidades, n: filtradas.length, devuelto, anulado, nAnuladas };
   }, [filtradas, devolucionesPorVenta]);
 
   function exportar() {
@@ -164,6 +173,8 @@ export function HistorialScreen() {
           Cliente: v.cliente,
           Vendedor: v.vendedor ?? "",
           "Medio de pago": v.medioPago ?? "",
+          Anulada: v.anulada ? "Sí" : "",
+          "Motivo anulación": v.anulada?.motivo ?? "",
           Codigo: l.codigo,
           Descripcion: l.descripcion,
           Emprendedor: l.emprendedorNombre ?? "",
@@ -197,6 +208,8 @@ export function HistorialScreen() {
 
       const totalBruto = vs.reduce((s, v) => s + (v.total || 0), 0);
       const totalDevuelto = ds.reduce((s, d) => s + (d.total || 0), 0);
+      const anuladas = vs.filter((v) => v.anulada);
+      const totalAnulado = anuladas.reduce((s, v) => s + (v.total || 0), 0);
       const unidades = vs.reduce(
         (s, v) => s + v.items.reduce((ss, l) => ss + l.cantidad, 0),
         0
@@ -211,9 +224,11 @@ export function HistorialScreen() {
           "Ventas (N°)": vs.length,
           "Unidades vendidas": unidades,
           "Total bruto": totalBruto,
+          "Anuladas (N°)": anuladas.length,
+          "Total anulado": totalAnulado,
           "Devoluciones (N°)": ds.length,
           "Total devuelto": totalDevuelto,
-          "Neto": totalBruto - totalDevuelto,
+          "Neto": totalBruto - totalDevuelto - totalAnulado,
         },
       ];
 
@@ -339,6 +354,12 @@ export function HistorialScreen() {
               Devuelto: <b className="text-red-600">−{money(resumen.devuelto)}</b>
             </span>
           )}
+          {resumen.anulado > 0 && (
+            <span className="text-slate-500">
+              Anulado ({resumen.nAnuladas}):{" "}
+              <b className="text-red-600">−{money(resumen.anulado)}</b>
+            </span>
+          )}
         </div>
       </div>
 
@@ -387,6 +408,7 @@ export function HistorialScreen() {
                   onToggle={() => setAbierta(abierto ? null : v.nro)}
                   onDevolver={() => setDevolver(v)}
                   onImprimir={() => setImprimir(v)}
+                  onAnular={() => setAnular(v)}
                 />
               );
             })}
@@ -406,6 +428,19 @@ export function HistorialScreen() {
       />
 
       <ModalImprimirBoleta venta={imprimir} onCerrar={() => setImprimir(null)} />
+
+      <ModalAnularVenta
+        venta={anular}
+        tieneDevoluciones={
+          anular ? (devolucionesPorVenta.get(anular.nro) || []).length > 0 : false
+        }
+        vendedor={vendedor}
+        onCerrar={() => setAnular(null)}
+        onAnulada={async () => {
+          setAnular(null);
+          await cargar();
+        }}
+      />
     </div>
   );
 }
@@ -417,6 +452,7 @@ function FilaVenta({
   onToggle,
   onDevolver,
   onImprimir,
+  onAnular,
 }: {
   venta: Venta;
   devoluciones: Devolucion[];
@@ -424,6 +460,7 @@ function FilaVenta({
   onToggle: () => void;
   onDevolver: () => void;
   onImprimir: () => void;
+  onAnular: () => void;
 }) {
   // Cuánto se ha devuelto por cada línea (por código, suma de cantidades).
   // Para líneas manuales (sin código) usamos la descripción como clave.
@@ -440,18 +477,34 @@ function FilaVenta({
 
   const totalDevuelto = devoluciones.reduce((s, d) => s + (d.total || 0), 0);
   const completaDevuelta = totalDevuelto >= v.total - 0.5; // tolerancia centavos
+  const anulada = !!v.anulada;
 
   return (
     <>
-      <tr className="border-t hover:bg-slate-50 cursor-pointer" onClick={onToggle}>
+      <tr
+        className={`border-t hover:bg-slate-50 cursor-pointer ${
+          anulada ? "bg-red-50/40" : ""
+        }`}
+        onClick={onToggle}
+      >
         <td className="px-2 text-slate-400 text-center">
           {abierto ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </td>
-        <td className="px-3 py-2 font-mono">{v.nro}</td>
-        <td className="px-3 py-2">{v.fecha}</td>
+        <td className={`px-3 py-2 font-mono ${anulada ? "line-through text-slate-400" : ""}`}>
+          {v.nro}
+        </td>
+        <td className={`px-3 py-2 ${anulada ? "text-slate-400" : ""}`}>{v.fecha}</td>
         <td className="px-3 py-2">
-          {v.cliente}
-          {totalDevuelto > 0 && (
+          <span className={anulada ? "text-slate-400 line-through" : ""}>{v.cliente}</span>
+          {anulada && (
+            <span
+              className="ml-2 text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 bg-red-600 text-white"
+              title={`Anulada: ${v.anulada?.motivo || "sin motivo"}`}
+            >
+              ANULADA
+            </span>
+          )}
+          {!anulada && totalDevuelto > 0 && (
             <span
               className={`ml-2 text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 ${
                 completaDevuelta
@@ -464,8 +517,16 @@ function FilaVenta({
             </span>
           )}
         </td>
-        <td className="px-3 py-2 text-right">{v.items.length}</td>
-        <td className="px-3 py-2 text-right font-semibold">{money(v.total)}</td>
+        <td className={`px-3 py-2 text-right ${anulada ? "text-slate-400" : ""}`}>
+          {v.items.length}
+        </td>
+        <td
+          className={`px-3 py-2 text-right font-semibold ${
+            anulada ? "text-slate-400 line-through" : ""
+          }`}
+        >
+          {money(v.total)}
+        </td>
       </tr>
       {abierto && (
         <tr className="bg-slate-50">
@@ -529,7 +590,14 @@ function FilaVenta({
               {v.vendedor && (
                 <span className="text-slate-400">Vendedor: {v.vendedor}</span>
               )}
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
+                {anulada && v.anulada && (
+                  <span className="text-xs text-red-700 font-semibold">
+                    Anulada {fmtFechaCorta(v.anulada.en)}
+                    {v.anulada.por && ` por ${v.anulada.por}`}
+                    {v.anulada.motivo && ` · ${v.anulada.motivo}`}
+                  </span>
+                )}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -539,21 +607,38 @@ function FilaVenta({
                 >
                   <Printer size={14} /> Reimprimir boleta
                 </button>
-                {completaDevuelta ? (
+                {!anulada && (completaDevuelta ? (
                   <span className="text-xs text-red-600 font-semibold">
                     Venta completamente devuelta
                   </span>
                 ) : (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDevolver();
-                    }}
-                    className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg px-3 py-1.5 text-xs"
-                  >
-                    <Undo2 size={14} /> Devolver productos
-                  </button>
-                )}
+                  <>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDevolver();
+                      }}
+                      className="flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg px-3 py-1.5 text-xs"
+                    >
+                      <Undo2 size={14} /> Devolver productos
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAnular();
+                      }}
+                      disabled={devoluciones.length > 0}
+                      title={
+                        devoluciones.length > 0
+                          ? "No se puede anular: ya tiene devoluciones."
+                          : "Anular la venta entera"
+                      }
+                      className="flex items-center gap-1.5 border-2 border-red-600 text-red-700 hover:bg-red-50 font-semibold rounded-lg px-3 py-1.5 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Ban size={14} /> Anular venta
+                    </button>
+                  </>
+                ))}
               </div>
             </div>
           </td>
@@ -577,6 +662,172 @@ function isoOf(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const da = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${da}`;
+}
+
+// "12/06 14:30" para mostrar fecha+hora de una anulación en una sola línea.
+function fmtFechaCorta(t: number): string {
+  const d = new Date(t);
+  const dia = String(d.getDate()).padStart(2, "0");
+  const mes = String(d.getMonth() + 1).padStart(2, "0");
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${dia}/${mes} ${h}:${m}`;
+}
+
+// ===== Modal de anulación de venta =====
+
+function ModalAnularVenta({
+  venta,
+  tieneDevoluciones,
+  vendedor,
+  onCerrar,
+  onAnulada,
+}: {
+  venta: Venta | null;
+  tieneDevoluciones: boolean;
+  vendedor: string;
+  onCerrar: () => void;
+  onAnulada: () => Promise<void>;
+}) {
+  const [motivo, setMotivo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [hayCaja, setHayCaja] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!venta) return;
+    setMotivo("");
+    setErr("");
+    setBusy(false);
+    if (venta.medioPago === "efectivo") {
+      setHayCaja(null);
+      cajaAbierta()
+        .then((c) => setHayCaja(!!c))
+        .catch(() => setHayCaja(false));
+    } else {
+      setHayCaja(true);
+    }
+  }, [venta]);
+
+  const necesitaCaja = venta?.medioPago === "efectivo";
+  const bloqueadoPorCaja = necesitaCaja && hayCaja === false;
+
+  async function confirmar() {
+    if (!venta) return;
+    if (!motivo.trim()) {
+      setErr("Escribe el motivo de la anulación.");
+      return;
+    }
+    setBusy(true);
+    setErr("");
+    try {
+      await anularVenta(venta, motivo.trim(), vendedor || venta.vendedor || "");
+      await onAnulada();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "No se pudo anular la venta.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      abierto={!!venta}
+      onCerrar={busy ? () => {} : onCerrar}
+      titulo={venta ? `Anular venta · ${venta.nro}` : ""}
+      maxW="max-w-md"
+    >
+      {venta && (
+        <div className="space-y-4">
+          <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg px-3 py-3 text-sm">
+            <div className="font-semibold flex items-center gap-1.5">
+              <AlertTriangle size={16} /> Anular es irreversible
+            </div>
+            <p className="mt-1 text-xs">
+              La venta queda marcada como ANULADA. Se restituye el stock,
+              {venta.medioPago === "fiado" && " se abona la deuda del cliente,"}
+              {venta.medioPago === "efectivo" && " se descuenta de la caja abierta,"}
+              {" "} y deja de contar en los totales.
+            </p>
+          </div>
+
+          <div className="bg-slate-50 rounded-lg p-3 text-sm grid sm:grid-cols-3 gap-2">
+            <span>
+              <span className="text-slate-500">Cliente:</span>{" "}
+              <b className="text-slate-800">{venta.cliente || "—"}</b>
+            </span>
+            <span>
+              <span className="text-slate-500">Medio:</span>{" "}
+              <b className="text-slate-800 capitalize">{venta.medioPago || "—"}</b>
+            </span>
+            <span>
+              <span className="text-slate-500">Total:</span>{" "}
+              <b className="text-slate-800">{money(venta.total)}</b>
+            </span>
+          </div>
+
+          {tieneDevoluciones && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm">
+              No se puede anular: la venta ya tiene devoluciones registradas.
+            </div>
+          )}
+
+          {bloqueadoPorCaja && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 text-sm flex items-start gap-2">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <div>
+                Para anular una venta en <b>efectivo</b> debe haber una caja abierta.
+                Ve a Caja, abre el turno y vuelve.
+              </div>
+            </div>
+          )}
+
+          {necesitaCaja && hayCaja === null && (
+            <div className="bg-slate-50 text-slate-500 rounded-lg px-3 py-2 text-xs">
+              Verificando caja…
+            </div>
+          )}
+
+          <label className="block text-sm">
+            <span className="text-slate-600 font-medium">Motivo</span>
+            <input
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="Ej: error de cobro, cliente arrepentido, ítem mal cargado…"
+              className="mt-1 w-full border rounded-lg px-3 py-2 text-sm"
+              autoFocus
+            />
+          </label>
+
+          <p className="text-xs text-slate-500">
+            Anula: <b>{vendedor || "Sin vendedor"}</b>
+          </p>
+
+          {err && <p className="text-sm text-red-600">{err}</p>}
+
+          <div className="flex items-center justify-end gap-2">
+            <button
+              onClick={onCerrar}
+              disabled={busy}
+              className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={confirmar}
+              disabled={
+                busy || tieneDevoluciones || bloqueadoPorCaja || !motivo.trim()
+              }
+              className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg px-4 py-2 disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
+              Anular venta
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
 }
 
 // ===== Modal de reimpresión de boleta =====

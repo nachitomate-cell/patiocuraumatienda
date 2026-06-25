@@ -1,11 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { Plus, Check, PackageCheck } from "lucide-react";
-import { getEmprendedorPorToken, agregarProductoEmprendedor } from "@/lib/repo";
-import type { Emprendedor, Producto } from "@/lib/types";
-import { money } from "@/lib/format";
+import {
+  Plus,
+  Check,
+  PackageCheck,
+  Pencil,
+  X,
+  ShoppingBag,
+  Download,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
+import * as XLSX from "xlsx";
+import {
+  getEmprendedorPorToken,
+  agregarProductoEmprendedor,
+  productosDeEmprendedor,
+  ventasDeEmprendedor,
+  actualizarProductoEmprendedor,
+} from "@/lib/repo";
+import {
+  subtotalLinea,
+  type Emprendedor,
+  type Producto,
+  type Venta,
+} from "@/lib/types";
+import { money, hoyISO } from "@/lib/format";
 import { useNegocio } from "@/lib/negocio-context";
 import { useAuth } from "@/lib/auth";
 
@@ -13,37 +35,123 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const { user, loading } = useAuth();
   const NEGOCIO = useNegocio();
   const [emp, setEmp] = useState<Emprendedor | null>(null);
-  const [estado, setEstado] = useState<"cargando" | "ok" | "invalido">("cargando");
-  // Productos agregados en esta sesión (la lista no se relee del servidor: el
-  // emprendedor no tiene permiso para listar el catálogo).
-  const [productos, setProductos] = useState<Producto[]>([]);
+  const [estado, setEstado] = useState<"cargando" | "ok" | "invalido" | "inactivo">("cargando");
 
+  // Estado del servidor (productos + ventas del emprendedor).
+  const [productos, setProductos] = useState<Producto[]>([]);
+  const [ventas, setVentas] = useState<Venta[]>([]);
+  const [cargandoDatos, setCargandoDatos] = useState(false);
+
+  // Formulario "agregar producto".
   const [descripcion, setDescripcion] = useState("");
   const [precio, setPrecio] = useState(0);
   const [stock, setStock] = useState(1);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
+  // Edición de un producto existente.
+  const [editCodigo, setEditCodigo] = useState<string | null>(null);
+  const [edDescripcion, setEdDescripcion] = useState("");
+  const [edPrecio, setEdPrecio] = useState(0);
+  const [edStock, setEdStock] = useState(0);
+  const [busyEdit, setBusyEdit] = useState(false);
+  const [editErr, setEditErr] = useState("");
+
+  const [descargando, setDescargando] = useState(false);
+
+  // Carga inicial: emprendedor + (si ok) sus productos y ventas.
   useEffect(() => {
-    // Espera a que haya sesión (anónima) para tener token de Firestore.
     if (loading || !user) return;
     let vivo = true;
     getEmprendedorPorToken(token)
-      .then((e) => {
+      .then(async (e) => {
         if (!vivo) return;
         if (!e) {
           setEstado("invalido");
           return;
         }
         setEmp(e);
+        if (e.activo === false) {
+          setEstado("inactivo");
+          return;
+        }
         setEstado("ok");
+        await cargarDatos(e);
       })
       .catch(() => vivo && setEstado("invalido"));
     return () => {
       vivo = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user, loading]);
 
+  async function cargarDatos(e: Emprendedor) {
+    setCargandoDatos(true);
+    try {
+      // Pasamos id + prefijo: la query usa AMBOS para alcanzar productos
+      // legacy migrados sin emprendedorId estampado.
+      const target = { id: e.id, prefijo: e.prefijo };
+      const [prods, vs] = await Promise.all([
+        productosDeEmprendedor(target),
+        ventasDeEmprendedor(target),
+      ]);
+      prods.sort((a, b) => a.codigo.localeCompare(b.codigo));
+      setProductos(prods);
+      setVentas(vs);
+    } finally {
+      setCargandoDatos(false);
+    }
+  }
+
+  // ===== Métricas para mostrar y para el Excel =====
+  // Unidades vendidas históricas y total ingresado por código.
+  const ventasPorCodigo = useMemo(() => {
+    const m = new Map<string, { unidades: number; total: number }>();
+    for (const v of ventas) {
+      // Anuladas no cuentan.
+      if (v.anulada) continue;
+      for (const l of v.items) {
+        const k = l.codigo || "(manual)";
+        const acc = m.get(k) || { unidades: 0, total: 0 };
+        acc.unidades += l.cantidad;
+        acc.total += subtotalLinea(l);
+        m.set(k, acc);
+      }
+    }
+    return m;
+  }, [ventas]);
+
+  const totales = useMemo(() => {
+    let unidades = 0;
+    let totalVendido = 0;
+    let nVentas = 0;
+    let ingresoHoy = 0;
+    let ingresoMes = 0;
+
+    // Ventana de "hoy" y "este mes" en tiempo local. Usamos límite inferior
+    // como epoch ms para comparar con venta.creadoEn.
+    const ahora = new Date();
+    const inicioHoy = new Date(
+      ahora.getFullYear(),
+      ahora.getMonth(),
+      ahora.getDate()
+    ).getTime();
+    const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).getTime();
+
+    for (const v of ventas) {
+      if (v.anulada) continue;
+      nVentas++;
+      const sub = v.items.reduce((s, l) => s + subtotalLinea(l), 0);
+      totalVendido += sub;
+      for (const l of v.items) unidades += l.cantidad;
+      if (v.creadoEn >= inicioHoy) ingresoHoy += sub;
+      if (v.creadoEn >= inicioMes) ingresoMes += sub;
+    }
+    const stockTotal = productos.reduce((s, p) => s + (p.stockActual || 0), 0);
+    return { unidades, totalVendido, nVentas, stockTotal, ingresoHoy, ingresoMes };
+  }, [ventas, productos]);
+
+  // ===== Alta =====
   async function agregar() {
     if (!emp) return;
     if (!descripcion.trim()) return setMsg("Escribe el nombre del producto.");
@@ -57,11 +165,20 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         stock,
       });
       setMsg(`✅ "${descripcion}" agregado (código ${cod}).`);
-      // Suma a la lista local (sin releer el catálogo).
-      setProductos((prev) => [
-        { codigo: cod, descripcion: descripcion.trim(), precio, stockActual: stock } as Producto,
-        ...prev,
-      ]);
+      setProductos((prev) =>
+        [
+          {
+            codigo: cod,
+            descripcion: descripcion.trim(),
+            precio,
+            stockActual: stock,
+            costo: 0,
+            emprendedorId: emp.id,
+            emprendedorNombre: emp.nombre,
+          } as Producto,
+          ...prev,
+        ].sort((a, b) => a.codigo.localeCompare(b.codigo))
+      );
       setDescripcion("");
       setPrecio(0);
       setStock(1);
@@ -72,6 +189,125 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     }
   }
 
+  // ===== Edición =====
+  function abrirEdicion(p: Producto) {
+    setEditCodigo(p.codigo);
+    setEdDescripcion(p.descripcion || "");
+    setEdPrecio(p.precio || 0);
+    setEdStock(p.stockActual || 0);
+    setEditErr("");
+  }
+
+  async function guardarEdicion() {
+    if (!emp || !editCodigo) return;
+    setBusyEdit(true);
+    setEditErr("");
+    try {
+      await actualizarProductoEmprendedor(emp.id, editCodigo, {
+        descripcion: edDescripcion,
+        precio: edPrecio,
+        stockActual: edStock,
+      });
+      setProductos((prev) =>
+        prev.map((p) =>
+          p.codigo === editCodigo
+            ? {
+                ...p,
+                descripcion: edDescripcion.trim(),
+                precio: Math.max(0, Math.round(edPrecio || 0)),
+                stockActual: Math.max(0, Math.round(edStock || 0)),
+              }
+            : p
+        )
+      );
+      setEditCodigo(null);
+    } catch (e) {
+      setEditErr(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setBusyEdit(false);
+    }
+  }
+
+  // ===== Excel =====
+  function descargarReporte() {
+    if (!emp) return;
+    setDescargando(true);
+    try {
+      const productosRows = productos.map((p) => {
+        const stats = ventasPorCodigo.get(p.codigo) || { unidades: 0, total: 0 };
+        return {
+          Codigo: p.codigo,
+          Descripcion: p.descripcion,
+          "Precio actual": p.precio,
+          "Stock actual": p.stockActual,
+          "Unidades vendidas": stats.unidades,
+          "Ingresos generados": stats.total,
+        };
+      });
+
+      const ventasRows = ventas.flatMap((v) =>
+        v.items.map((l) => ({
+          "Nro venta": v.nro,
+          Fecha: v.fecha,
+          Hora: new Date(v.creadoEn).toLocaleTimeString("es-CL", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          Anulada: v.anulada ? "Sí" : "",
+          Codigo: l.codigo,
+          Descripcion: l.descripcion,
+          Cantidad: l.cantidad,
+          "Valor unidad": l.precio,
+          "Dscto%": l.descuento,
+          Subtotal: subtotalLinea(l),
+        }))
+      );
+
+      const resumenRows = [
+        {
+          Emprendedor: emp.nombre,
+          Negocio: NEGOCIO.nombre || NEGOCIO.slug,
+          Generado: new Date().toLocaleString("es-CL"),
+          "Productos (catálogo)": productos.length,
+          "Stock total (unidades)": totales.stockTotal,
+          "Ventas (N°, no anuladas)": totales.nVentas,
+          "Unidades vendidas": totales.unidades,
+          "Ingreso hoy": totales.ingresoHoy,
+          "Ingreso del mes": totales.ingresoMes,
+          "Total ingresado": totales.totalVendido,
+        },
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumenRows), "Resumen");
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          productosRows.length ? productosRows : [{ Aviso: "Sin productos" }]
+        ),
+        "Productos"
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          ventasRows.length ? ventasRows : [{ Aviso: "Sin ventas registradas" }]
+        ),
+        "Ventas"
+      );
+
+      const slugEmp = (emp.nombre || emp.prefijo)
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      XLSX.writeFile(wb, `reporte_${slugEmp}_${hoyISO()}.xlsx`);
+    } finally {
+      setDescargando(false);
+    }
+  }
+
+  // ===== Estados de carga =====
   if (estado === "cargando") {
     return <div className="mt-20 text-center text-slate-500">Cargando…</div>;
   }
@@ -88,28 +324,94 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     );
   }
 
+  if (estado === "inactivo") {
+    return (
+      <div className="mx-auto max-w-md mt-20 bg-white rounded-xl shadow p-6 text-center">
+        <h1 className="text-lg font-bold text-slate-900">Cuenta inactiva</h1>
+        <p className="text-slate-500 mt-2 text-sm">
+          La cuenta de <strong>{emp?.nombre}</strong> está pausada y no admite carga de productos.
+          Contacta al administrador de {NEGOCIO.nombre} si necesitas reactivarla.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen">
       <header className="bg-slate-900 text-white">
-        <div className="mx-auto max-w-2xl px-4 h-16 flex items-center gap-3">
+        <div className="mx-auto max-w-3xl px-4 h-16 flex items-center gap-3">
           <Image src={NEGOCIO.logo} alt={NEGOCIO.nombre} width={36} height={48} className="h-10 w-auto" />
           <div className="leading-none">
             <div className="font-bold">{NEGOCIO.nombre}</div>
             <div className="text-[10px] uppercase tracking-[0.2em] text-amber-300/80">
-              Carga de productos
+              Portal del emprendedor
             </div>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-2xl px-4 py-6 space-y-4">
+      <main className="mx-auto max-w-3xl px-4 py-6 space-y-4">
+        {/* Bienvenida + resumen */}
         <div className="bg-white rounded-xl shadow p-5 anim-in">
-          <h1 className="text-xl font-bold text-slate-900">¡Hola, {emp?.nombre}! 👋</h1>
-          <p className="text-slate-500 mt-1">
-            Agrega aquí tus productos. Entran directo al stock de la tienda {NEGOCIO.nombre}.
-          </p>
+          <div className="flex items-start justify-between flex-wrap gap-3">
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">¡Hola, {emp?.nombre}! 👋</h1>
+              <p className="text-slate-500 mt-1 text-sm">
+                Gestiona tu catálogo, revisa tus ventas y descarga tu reporte.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => emp && cargarDatos(emp)}
+                disabled={cargandoDatos}
+                title="Refrescar datos"
+                className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={cargandoDatos ? "animate-spin" : ""} />
+              </button>
+              <button
+                onClick={descargarReporte}
+                disabled={descargando || cargandoDatos}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              >
+                {descargando ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                Descargar Excel
+              </button>
+            </div>
+          </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <Mini label="Productos" valor={productos.length.toString()} />
+            <Mini label="Stock total" valor={`${totales.stockTotal} u.`} />
+            <Mini label="Ventas" valor={totales.nVentas.toString()} />
+          </div>
+
+          <div className="mt-3">
+            <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
+              Ingresos
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Mini
+                label="Hoy"
+                valor={money(totales.ingresoHoy)}
+                acento="emerald"
+              />
+              <Mini
+                label="Este mes"
+                valor={money(totales.ingresoMes)}
+                acento="cyan"
+              />
+              <Mini label="Total" valor={money(totales.totalVendido)} />
+            </div>
+          </div>
+        </div>
+
+        {/* Alta de producto */}
+        <div className="bg-white rounded-xl shadow p-5 anim-in">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+            <Plus className="text-emerald-600" size={20} /> Cargar nuevo producto
+          </h2>
+          <div className="space-y-3">
             <label className="block text-sm">
               <span className="text-slate-600 font-medium">Nombre del producto</span>
               <input
@@ -125,7 +427,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 <input
                   type="number"
                   min={0}
-                  value={precio}
+                  value={precio || ""}
                   onChange={(e) => setPrecio(Number(e.target.value))}
                   className="mt-1 w-full border rounded-lg px-3 py-2.5"
                 />
@@ -156,28 +458,171 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           </div>
         </div>
 
+        {/* Inventario editable */}
         <div className="bg-white rounded-xl shadow p-5 anim-in">
           <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
-            <PackageCheck className="text-emerald-600" size={20} /> Tus productos cargados (
+            <PackageCheck className="text-emerald-600" size={20} /> Mi inventario (
             {productos.length})
           </h2>
-          {productos.length === 0 ? (
-            <p className="text-slate-400 text-sm">Aún no has agregado productos.</p>
+          {cargandoDatos && productos.length === 0 ? (
+            <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
+          ) : productos.length === 0 ? (
+            <p className="text-slate-400 text-sm py-3 text-center">
+              Aún no tienes productos cargados.
+            </p>
           ) : (
             <ul className="divide-y">
-              {productos.map((p) => (
-                <li key={p.codigo} className="flex items-center justify-between py-2 text-sm">
-                  <span>
-                    <span className="font-mono text-slate-400">{p.codigo}</span>{" "}
-                    {p.descripcion}
-                  </span>
-                  <span className="flex items-center gap-3">
-                    <span className="text-slate-500">{p.stockActual} u.</span>
-                    <span className="font-semibold">{money(p.precio)}</span>
-                    <Check size={16} className="text-emerald-500" />
-                  </span>
-                </li>
-              ))}
+              {productos.map((p) => {
+                const enEdicion = editCodigo === p.codigo;
+                const stats = ventasPorCodigo.get(p.codigo) || { unidades: 0, total: 0 };
+                if (enEdicion) {
+                  return (
+                    <li key={p.codigo} className="py-3 anim-pop">
+                      <div className="text-xs text-slate-400 font-mono mb-2">{p.codigo}</div>
+                      <input
+                        value={edDescripcion}
+                        onChange={(e) => setEdDescripcion(e.target.value)}
+                        placeholder="Descripción"
+                        className="w-full border rounded-lg px-3 py-2 text-sm mb-2"
+                      />
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="block text-xs">
+                          <span className="text-slate-500">Precio ($)</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={edPrecio || ""}
+                            onChange={(e) => setEdPrecio(Number(e.target.value) || 0)}
+                            className="mt-1 w-full border rounded-lg px-3 py-2"
+                          />
+                        </label>
+                        <label className="block text-xs">
+                          <span className="text-slate-500">Stock</span>
+                          <input
+                            type="number"
+                            min={0}
+                            value={edStock}
+                            onChange={(e) => setEdStock(Number(e.target.value) || 0)}
+                            className="mt-1 w-full border rounded-lg px-3 py-2"
+                          />
+                        </label>
+                      </div>
+                      {editErr && (
+                        <p className="mt-2 text-xs text-red-600">{editErr}</p>
+                      )}
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          onClick={guardarEdicion}
+                          disabled={busyEdit}
+                          className="flex items-center gap-1.5 bg-emerald-600 text-white text-sm font-semibold rounded-lg px-3 py-2 disabled:opacity-50"
+                        >
+                          {busyEdit ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Check size={14} />
+                          )}
+                          Guardar
+                        </button>
+                        <button
+                          onClick={() => setEditCodigo(null)}
+                          disabled={busyEdit}
+                          className="flex items-center gap-1.5 border border-slate-300 text-slate-700 text-sm font-semibold rounded-lg px-3 py-2 disabled:opacity-50"
+                        >
+                          <X size={14} /> Cancelar
+                        </button>
+                      </div>
+                    </li>
+                  );
+                }
+                return (
+                  <li
+                    key={p.codigo}
+                    className="py-2 flex items-center justify-between gap-3 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-slate-800 truncate">
+                        {p.descripcion}
+                      </div>
+                      <div className="text-xs text-slate-500 flex flex-wrap gap-x-2">
+                        <span className="font-mono">{p.codigo}</span>
+                        <span>· {p.stockActual} u.</span>
+                        <span>· {money(p.precio)}</span>
+                        {stats.unidades > 0 && (
+                          <span className="text-emerald-700">
+                            · vendidas {stats.unidades}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => abrirEdicion(p)}
+                      className="flex items-center gap-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs shrink-0"
+                    >
+                      <Pencil size={14} /> Editar
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        {/* Ventas */}
+        <div className="bg-white rounded-xl shadow p-5 anim-in">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+            <ShoppingBag className="text-cyan-600" size={20} /> Mis ventas (
+            {totales.nVentas})
+          </h2>
+          {cargandoDatos && ventas.length === 0 ? (
+            <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
+          ) : ventas.length === 0 ? (
+            <p className="text-slate-400 text-sm py-3 text-center">
+              Aún no se han vendido productos tuyos.
+            </p>
+          ) : (
+            <ul className="divide-y">
+              {ventas.map((v) => {
+                const subtotalV = v.items.reduce((s, l) => s + subtotalLinea(l), 0);
+                const hora = new Date(v.creadoEn).toLocaleTimeString("es-CL", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                return (
+                  <li key={v.nro} className="py-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span>
+                        <span className="font-mono text-slate-400">{v.nro}</span>{" "}
+                        <span className="text-slate-600">
+                          {v.fecha} · {hora}
+                        </span>
+                        {v.anulada && (
+                          <span className="ml-1.5 text-[10px] font-bold uppercase bg-red-600 text-white rounded px-1.5 py-0.5">
+                            ANULADA
+                          </span>
+                        )}
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          v.anulada ? "text-slate-400 line-through" : "text-emerald-700"
+                        }`}
+                      >
+                        {money(subtotalV)}
+                      </span>
+                    </div>
+                    <ul className="mt-1 text-xs text-slate-500 space-y-0.5">
+                      {v.items.map((l, i) => (
+                        <li key={i} className="flex justify-between">
+                          <span className="truncate pr-2">
+                            <span className="font-mono">{l.codigo}</span> {l.descripcion}
+                            {l.cantidad > 1 && ` × ${l.cantidad}`}
+                          </span>
+                          <span className="shrink-0">{money(subtotalLinea(l))}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -187,6 +632,30 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           {NEGOCIO.ubicacion && ` · ${NEGOCIO.ubicacion}`}
         </p>
       </main>
+    </div>
+  );
+}
+
+function Mini({
+  label,
+  valor,
+  acento,
+}: {
+  label: string;
+  valor: string;
+  // "emerald" o "cyan" colorean el valor; sin acento queda en slate-800.
+  acento?: "emerald" | "cyan";
+}) {
+  const valorCls =
+    acento === "emerald"
+      ? "text-emerald-700"
+      : acento === "cyan"
+      ? "text-cyan-700"
+      : "text-slate-800";
+  return (
+    <div className="bg-slate-50 rounded-lg p-3">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={`text-base font-bold mt-0.5 ${valorCls}`}>{valor}</div>
     </div>
   );
 }
