@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Store, TrendingUp } from "lucide-react";
+import { BarChart3, Store, TrendingUp, History } from "lucide-react";
 
 const TABS = [
   { href: "/crm", label: "General", Icon: BarChart3 },
   { href: "/crm/por-emprendedor", label: "Por emprendedor", Icon: Store },
   { href: "/crm/variacion", label: "Variación mensual", Icon: TrendingUp },
+  { href: "/crm/historial-emprendedor", label: "Historial emprendedor", Icon: History },
 ];
 
 export function CrmTabs() {

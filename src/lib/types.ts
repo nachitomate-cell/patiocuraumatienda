@@ -67,6 +67,10 @@ export interface Venta {
   clienteId?: string; // referencia al cliente del fiado
   clienteNombre?: string;
   anulada?: AnulacionInfo;
+  // Folio que entrega la boleta legal (SII u otra), opcional. Se ingresa al
+  // momento de finalizar la venta o desde el historial. Es texto libre porque
+  // varía según el sistema externo que lo emite.
+  codigoBoleta?: string;
 }
 
 // Cliente del cuaderno de fiados.
@@ -85,6 +89,39 @@ export interface MovimientoFiado {
   nota?: string;
   ventaNro?: string;
   creadoEn: number;
+}
+
+// Bitácora de cambios sobre el catálogo de un emprendedor y sobre la ficha del
+// emprendedor mismo. Se almacena en negocios/{slug}/emprendedores/{id}/movimientos.
+// Se registra tanto lo que hace el emprendedor (desde /alta/{token}) como lo
+// que hace el admin (POS/stock/CRM). Cuando se elimina el emprendedor, su
+// historial deja de mostrarse junto con la ficha (los docs quedan huérfanos
+// como subcolección hasta limpieza manual: no hay UI que los liste sin padre).
+export type AccionMovEmprendedor =
+  | "producto_agregado"
+  | "precio_cambiado"
+  | "stock_cambiado"
+  | "descripcion_cambiada"
+  | "barcode_cambiado"
+  | "codigo_renombrado"
+  | "costo_cambiado"
+  | "emprendedor_creado"
+  | "emprendedor_editado"
+  | "emprendedor_activado"
+  | "emprendedor_pausado";
+
+export interface MovimientoEmprendedor {
+  en: number; // epoch ms
+  por: string; // nombre del actor (vendedor o emprendedor)
+  origen: "admin" | "emprendedor";
+  accion: AccionMovEmprendedor;
+  // Para acciones de producto: código y descripción snapshot al momento del cambio.
+  codigo?: string;
+  descripcion?: string;
+  // Valor anterior y nuevo. Strings para descripción/código/barcode/etc., números
+  // para precio/stock/costo. Se guardan como string siempre para simplificar la UI.
+  antes?: string;
+  despues?: string;
 }
 
 export interface LineaEntrada {

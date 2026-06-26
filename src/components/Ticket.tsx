@@ -3,6 +3,7 @@
 import { subtotalLinea, type LineaVenta } from "@/lib/types";
 import { money } from "@/lib/format";
 import { useNegocio } from "@/lib/negocio-context";
+import type { BoletaConfig } from "@/lib/negocio";
 
 interface Props {
   nro: string;
@@ -12,17 +13,36 @@ interface Props {
   total: number;
   vendedor?: string;
   medioPago?: string;
+  // Folio externo de la boleta (SII u otro), si fue asociado a la venta.
+  codigoBoleta?: string;
+  // Override de la config: la pantalla /boleta lo usa para mostrar el preview
+  // en vivo de los cambios sin esperar al refresh del context.
+  cfgOverride?: BoletaConfig;
 }
 
 // Boleta térmica (80mm). Solo este bloque se imprime (ver globals.css).
 // Cada línea del header/footer depende de la config en negocios/{slug}.boleta.
 // Si la config no está definida (boleta antigua), se muestran los valores que
 // se mostraban antes (mostrar* === undefined → se trata como TRUE).
-export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago }: Props) {
+export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago, codigoBoleta, cfgOverride }: Props) {
   const NEGOCIO = useNegocio();
-  const cfg = NEGOCIO.boleta || {};
+  const cfg = cfgOverride ?? NEGOCIO.boleta ?? {};
   // Helper: TRUE si está activado o no está definido.
   const on = (v: boolean | undefined) => v !== false;
+  // Override: el campo de la boleta gana sobre el del branding si está seteado
+  // (string no vacío). Permite editar todo desde /boleta sin tocar el branding
+  // global (que solo el moderador puede modificar).
+  const pick = (override: string | undefined, base: string | undefined): string => {
+    const o = (override ?? "").trim();
+    return o || (base ?? "");
+  };
+  const nombre = pick(cfg.nombre, NEGOCIO.nombre);
+  const eslogan = pick(cfg.eslogan, NEGOCIO.eslogan);
+  const rubro = pick(cfg.rubro, NEGOCIO.rubro);
+  const ubicacion = pick(cfg.ubicacion, NEGOCIO.ubicacion);
+  const web = pick(cfg.web, NEGOCIO.web);
+  const instagram = pick(cfg.instagram, NEGOCIO.instagram);
+  const qrClub = pick(cfg.qrClub, NEGOCIO.qrClub);
 
   const textoGracias = (cfg.textoGracias || "¡GRACIAS POR SU COMPRA!").trim();
 
@@ -33,13 +53,13 @@ export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago 
       style={{ width: "80mm", maxWidth: "100%" }}
     >
       <div className="text-center">
-        <div className="font-bold text-sm">{NEGOCIO.nombre.toUpperCase()}</div>
-        {on(cfg.mostrarEslogan) && NEGOCIO.eslogan && (
-          <div className="text-[10px] uppercase tracking-widest">{NEGOCIO.eslogan}</div>
+        <div className="font-bold text-sm">{nombre.toUpperCase()}</div>
+        {on(cfg.mostrarEslogan) && eslogan && (
+          <div className="text-[10px] uppercase tracking-widest">{eslogan}</div>
         )}
-        {on(cfg.mostrarRubro) && NEGOCIO.rubro && <div>{NEGOCIO.rubro}</div>}
-        {on(cfg.mostrarUbicacion) && NEGOCIO.ubicacion && <div>📍 {NEGOCIO.ubicacion}</div>}
-        {on(cfg.mostrarWeb) && NEGOCIO.web && <div>{NEGOCIO.web}</div>}
+        {on(cfg.mostrarRubro) && rubro && <div>{rubro}</div>}
+        {on(cfg.mostrarUbicacion) && ubicacion && <div>📍 {ubicacion}</div>}
+        {on(cfg.mostrarWeb) && web && <div>{web}</div>}
       </div>
 
       {cfg.mensajeSuperior && cfg.mensajeSuperior.trim() && (
@@ -51,6 +71,9 @@ export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago 
         <span>Nro: {nro}</span>
         <span>{fecha}</span>
       </div>
+      {codigoBoleta && codigoBoleta.trim() && (
+        <div>Boleta: {codigoBoleta.trim()}</div>
+      )}
       <div>Cliente: {cliente}</div>
       {cfg.mostrarVendedor && vendedor && <div>Atiende: {vendedor}</div>}
       {cfg.mostrarMedioPago && medioPago && (
@@ -89,21 +112,21 @@ export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago 
       )}
 
       <div className="text-center mt-2">
-        {on(cfg.mostrarQrClub) && NEGOCIO.qrClub && (
+        {on(cfg.mostrarQrClub) && qrClub && (
           <>
             <div>📱 Club de Fidelización</div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={NEGOCIO.qrClub}
-              alt={`QR Club de Fidelización ${NEGOCIO.nombre}`}
+              src={qrClub}
+              alt={`QR Club de Fidelización ${nombre}`}
               className="mx-auto my-2 w-28 h-28"
             />
             <div>¡Escanea y acumula puntos!</div>
           </>
         )}
         {textoGracias && <div className="mt-2">{textoGracias}</div>}
-        {on(cfg.mostrarInstagram) && NEGOCIO.instagram && (
-          <div>📷 {NEGOCIO.instagram}</div>
+        {on(cfg.mostrarInstagram) && instagram && (
+          <div>📷 {instagram}</div>
         )}
       </div>
     </div>

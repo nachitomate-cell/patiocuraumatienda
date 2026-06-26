@@ -27,6 +27,14 @@ export interface BoletaConfig {
   mensajeSuperior?: string; // bajo el header (ej. RUT, dirección extra)
   mensajeInferior?: string; // antes del "gracias" (ej. política de cambios)
   textoGracias?: string; // default "¡GRACIAS POR SU COMPRA!"
+  // Overrides solo para la boleta impresa (no tocan el branding global).
+  nombre?: string;
+  eslogan?: string;
+  rubro?: string;
+  ubicacion?: string;
+  web?: string;
+  instagram?: string;
+  qrClub?: string; // URL o data URL del QR del Club
   mostrarRubro?: boolean;
   mostrarUbicacion?: boolean;
   mostrarWeb?: boolean;

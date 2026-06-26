@@ -12,6 +12,7 @@ import {
   Minus,
   Download,
   Loader2,
+  Calendar,
 } from "lucide-react";
 import {
   listarEmprendedores,
@@ -21,6 +22,8 @@ import {
 import { subtotalLinea, type Emprendedor, type LineaVenta, type Producto, type Venta } from "@/lib/types";
 import { money } from "@/lib/format";
 import { useNegocio } from "@/lib/negocio-context";
+import { Modal } from "@/components/Modal";
+import { SelectorFecha } from "@/components/SelectorFecha";
 import { CrmTabs } from "../CrmTabs";
 
 const MESES = [
@@ -76,6 +79,22 @@ function prevMes(y: number, mIdx: number): { y: number; m: number } {
   return mIdx === 0 ? { y: y - 1, m: 11 } : { y, m: mIdx - 1 };
 }
 
+function inicioDia(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+}
+function finDia(iso: string): number {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
+function hoyIso(): string {
+  const n = new Date();
+  const y = n.getFullYear();
+  const m = String(n.getMonth() + 1).padStart(2, "0");
+  const d = String(n.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 export function PorEmprendedorScreen() {
   const NEGOCIO = useNegocio();
   const ahora = new Date();
@@ -89,6 +108,11 @@ export function PorEmprendedorScreen() {
   const [emprendedores, setEmprendedores] = useState<Emprendedor[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
+
+  const [dlgDia, setDlgDia] = useState(false);
+  const [fechaDia, setFechaDia] = useState<string>(hoyIso);
+  const [expDia, setExpDia] = useState(false);
+  const [errDia, setErrDia] = useState("");
 
   const porCodigo = useMemo(() => {
     const m = new Map<string, Producto>();
@@ -180,7 +204,7 @@ export function PorEmprendedorScreen() {
     setMes(nuevo.getMonth());
   }
 
-  function exportar() {
+  function exportarMes() {
     const filasXls = filas.map((f) => ({
       Emprendedor: f.nombre,
       "Mes": f.mesMonto,
@@ -195,6 +219,55 @@ export function PorEmprendedorScreen() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `${MESES[mes]} ${year}`);
     XLSX.writeFile(wb, `ventas_por_emprendedor_${NEGOCIO.slug}_${year}-${String(mes + 1).padStart(2, "0")}.xlsx`);
+  }
+
+  async function exportarDia() {
+    if (!fechaDia) return;
+    setExpDia(true);
+    setErrDia("");
+    try {
+      const vDia = await ventasEnRango(inicioDia(fechaDia), finDia(fechaDia));
+      const agg = agregarPorEmprendedor(vDia, porCodigo);
+      const nombreDe = (id: string): string => {
+        if (id === "__sin__") return "Sin emprendedor";
+        const e = emprendedores.find((x) => x.id === id);
+        return e?.nombre ?? agg.get(id)?.nombre ?? id;
+      };
+      const filasDia = Array.from(agg.entries())
+        .map(([id, v]) => ({
+          id,
+          nombre: nombreDe(id),
+          monto: v.monto,
+          unidades: v.unidades,
+          nVentas: v.nVentas.size,
+        }))
+        .sort((a, b) => b.monto - a.monto);
+
+      if (filasDia.length === 0) {
+        setErrDia("Sin ventas registradas en esa fecha.");
+        return;
+      }
+
+      const totalDia = filasDia.reduce((s, f) => s + f.monto, 0);
+      const [yy, mm, dd] = fechaDia.split("-");
+      const filasXls = filasDia.map((f) => ({
+        Emprendedor: f.nombre,
+        Día: `${dd}/${mm}/${yy}`,
+        "Ventas (n°)": f.nVentas,
+        Unidades: f.unidades,
+        Monto: f.monto,
+        "% del total día": totalDia > 0 ? Number(((f.monto / totalDia) * 100).toFixed(1)) : 0,
+      }));
+      const ws = XLSX.utils.json_to_sheet(filasXls);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `${dd}-${mm}-${yy}`);
+      XLSX.writeFile(wb, `ventas_por_emprendedor_${NEGOCIO.slug}_dia_${yy}-${mm}-${dd}.xlsx`);
+      setDlgDia(false);
+    } catch (e) {
+      setErrDia((e as Error).message || "No se pudo exportar.");
+    } finally {
+      setExpDia(false);
+    }
   }
 
   return (
@@ -215,11 +288,24 @@ export function PorEmprendedorScreen() {
               <RefreshCw size={16} /> Actualizar
             </button>
             <button
-              onClick={exportar}
+              onClick={exportarMes}
               disabled={cargando || filas.length === 0}
               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50"
+              title="Exportar el mes seleccionado"
             >
-              <Download size={16} /> Exportar Excel
+              <Download size={16} /> Excel mes
+            </button>
+            <button
+              onClick={() => {
+                setErrDia("");
+                setFechaDia(hoyIso());
+                setDlgDia(true);
+              }}
+              disabled={cargando}
+              className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50"
+              title="Exportar un día puntual"
+            >
+              <Calendar size={16} /> Excel día
             </button>
           </div>
         </div>
@@ -339,6 +425,47 @@ export function PorEmprendedorScreen() {
           </div>
         )}
       </div>
+
+      <Modal
+        abierto={dlgDia}
+        onCerrar={() => setDlgDia(false)}
+        titulo="Exportar Excel de un día"
+        maxW="max-w-sm"
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-semibold text-slate-700 mb-1">
+              Día a exportar
+            </label>
+            <SelectorFecha value={fechaDia} onChange={setFechaDia} />
+          </div>
+          {errDia && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-2 text-sm">
+              {errDia}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              onClick={() => setDlgDia(false)}
+              className="px-3 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 text-sm font-semibold"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={exportarDia}
+              disabled={!fechaDia || expDia}
+              className="px-3 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {expDia ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Download size={16} />
+              )}
+              Exportar
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

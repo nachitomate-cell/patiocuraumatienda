@@ -1,14 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Loader2, Check } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Check, Upload, X, QrCode } from "lucide-react";
+import Image from "next/image";
 import type { BoletaConfig } from "@/lib/negocio";
+import { useNegocio } from "@/lib/negocio-context";
 
 interface Props {
   // Valor inicial (puede ser {}). Si cambia (ej. cambiar de negocio en
   // moderador), el editor se reinicia con los nuevos valores.
   inicial: BoletaConfig;
   onGuardar: (cfg: BoletaConfig) => Promise<void>;
+  // Notifica al padre cada cambio del state local: útil para que el preview
+  // del Ticket se actualice en vivo mientras se edita.
+  onCambio?: (cfg: BoletaConfig) => void;
   // Texto del botón. Default: "Guardar cambios".
   textoBoton?: string;
   // Si true, muestra un encabezado/título. En la página /boleta no hace
@@ -21,16 +26,31 @@ interface Props {
 //  - /moderador (modal de negocio): para que un moderador remoto la edite.
 // El persistence lo controla el padre vía onGuardar (puede apuntar a la
 // sub-colección o, en el moderador, también a otros campos del negocio).
-export function BoletaEditor({ inicial, onGuardar, textoBoton, conTitulo }: Props) {
+// Tamaño máximo del QR subido como data URL embebido en Firestore. Por
+// encima de esto el doc empieza a competir con el límite de 1 MiB. 200 KB del
+// archivo original -> ~270 KB en base64, suficiente para un QR razonable.
+const MAX_QR_BYTES = 200 * 1024;
+
+export function BoletaEditor({ inicial, onGuardar, onCambio, textoBoton, conTitulo }: Props) {
+  const NEGOCIO = useNegocio();
   const [boleta, setBoleta] = useState<BoletaConfig>(inicial);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const fileQrRef = useRef<HTMLInputElement>(null);
 
-  // Si cambia el inicial (ej. recarga, cambio de tenant), re-syncear.
+  // Si cambia el inicial (ej. recarga, cambio de tenant), re-syncear. NO
+  // limpia msg: el padre puede reusar `inicial` justo tras guardar (para
+  // re-syncear con lo persistido) y nos pisaría el toast de éxito.
   useEffect(() => {
     setBoleta(inicial);
-    setMsg(null);
   }, [inicial]);
+
+  // Notifica al padre tras cada cambio del state. Va en un effect (no dentro
+  // del updater de setBoleta) para no setear estado de otro componente
+  // durante el render: React lo rechaza con un warning visible al usuario.
+  useEffect(() => {
+    onCambio?.(boleta);
+  }, [boleta, onCambio]);
 
   function set<K extends keyof BoletaConfig>(k: K, v: BoletaConfig[K]) {
     setBoleta((b) => ({ ...b, [k]: v }));
@@ -40,11 +60,20 @@ export function BoletaEditor({ inicial, onGuardar, textoBoton, conTitulo }: Prop
     setBusy(true);
     setMsg(null);
     try {
+      // Limpia espacios alrededor de todos los textos antes de persistir.
+      const trim = (s: string | undefined) => (s ?? "").trim();
       await onGuardar({
         ...boleta,
-        mensajeSuperior: (boleta.mensajeSuperior || "").trim(),
-        mensajeInferior: (boleta.mensajeInferior || "").trim(),
-        textoGracias: (boleta.textoGracias || "").trim(),
+        mensajeSuperior: trim(boleta.mensajeSuperior),
+        mensajeInferior: trim(boleta.mensajeInferior),
+        textoGracias: trim(boleta.textoGracias),
+        nombre: trim(boleta.nombre),
+        eslogan: trim(boleta.eslogan),
+        rubro: trim(boleta.rubro),
+        ubicacion: trim(boleta.ubicacion),
+        web: trim(boleta.web),
+        instagram: trim(boleta.instagram),
+        qrClub: trim(boleta.qrClub),
       });
       setMsg({ tipo: "ok", texto: "Boleta guardada." });
       setTimeout(() => setMsg(null), 2500);
@@ -58,6 +87,47 @@ export function BoletaEditor({ inicial, onGuardar, textoBoton, conTitulo }: Prop
     }
   }
 
+  // Lee la imagen elegida y la convierte a data URL para guardarla embebida
+  // en el subdoc de la boleta. Limita el tamaño para no romper el doc.
+  function onElegirQr(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite re-elegir el mismo archivo
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setMsg({ tipo: "error", texto: "Elige un archivo de imagen." });
+      return;
+    }
+    if (file.size > MAX_QR_BYTES) {
+      setMsg({
+        tipo: "error",
+        texto: `La imagen pesa ${Math.round(file.size / 1024)} KB. Máximo ${Math.round(MAX_QR_BYTES / 1024)} KB.`,
+      });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || "");
+      if (!dataUrl) return;
+      set("qrClub", dataUrl);
+    };
+    reader.onerror = () =>
+      setMsg({ tipo: "error", texto: "No se pudo leer la imagen." });
+    reader.readAsDataURL(file);
+  }
+
+  function quitarQr() {
+    set("qrClub", "");
+  }
+
+  // Lo que se ve realmente en la boleta para este campo: override si está, si
+  // no el branding. Útil como placeholder visible en los inputs.
+  const efectivo = (k: "nombre" | "eslogan" | "rubro" | "ubicacion" | "web" | "instagram"): string => {
+    const v = (boleta[k] ?? "").trim();
+    if (v) return v;
+    return String((NEGOCIO[k] as string | undefined) ?? "");
+  };
+  const qrEfectivo = (boleta.qrClub ?? "").trim() || NEGOCIO.qrClub || "";
+
   return (
     <div className="space-y-4">
       {conTitulo && (
@@ -69,6 +139,136 @@ export function BoletaEditor({ inicial, onGuardar, textoBoton, conTitulo }: Prop
           </p>
         </div>
       )}
+
+      {/* Datos visibles en la boleta: si dejas algo en blanco, se usa lo del
+          branding del negocio (lo gestiona el moderador). Si escribes algo,
+          esa boleta usa tu valor. */}
+      <div>
+        <div className="text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide">
+          Datos visibles
+        </div>
+        <p className="text-xs text-slate-500 mb-2">
+          Vacío = se usa el valor del negocio. Con texto = reemplaza solo en la
+          boleta impresa.
+        </p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Campo label="Nombre del negocio">
+            <input
+              value={boleta.nombre || ""}
+              onChange={(e) => set("nombre", e.target.value)}
+              placeholder={NEGOCIO.nombre || ""}
+              className={inputCls}
+            />
+          </Campo>
+          <Campo label="Eslogan">
+            <input
+              value={boleta.eslogan || ""}
+              onChange={(e) => set("eslogan", e.target.value)}
+              placeholder={NEGOCIO.eslogan || ""}
+              className={inputCls}
+            />
+          </Campo>
+          <Campo label="Rubro">
+            <input
+              value={boleta.rubro || ""}
+              onChange={(e) => set("rubro", e.target.value)}
+              placeholder={NEGOCIO.rubro || ""}
+              className={inputCls}
+            />
+          </Campo>
+          <Campo label="Ubicación">
+            <input
+              value={boleta.ubicacion || ""}
+              onChange={(e) => set("ubicacion", e.target.value)}
+              placeholder={NEGOCIO.ubicacion || ""}
+              className={inputCls}
+            />
+          </Campo>
+          <Campo label="Sitio web">
+            <input
+              value={boleta.web || ""}
+              onChange={(e) => set("web", e.target.value)}
+              placeholder={NEGOCIO.web || ""}
+              className={inputCls}
+            />
+          </Campo>
+          <Campo label="Instagram">
+            <input
+              value={boleta.instagram || ""}
+              onChange={(e) => set("instagram", e.target.value)}
+              placeholder={NEGOCIO.instagram || ""}
+              className={inputCls}
+            />
+          </Campo>
+        </div>
+        {/* Indicador de qué valor se está usando si el operador NO escribió override. */}
+        <div className="mt-2 text-[11px] text-slate-400">
+          Valor actual: {efectivo("nombre")}
+        </div>
+      </div>
+
+      {/* QR del Club. Acepta URL pegada o imagen subida (se guarda embebida
+          como data URL en el subdoc, sin Firebase Storage). */}
+      <div>
+        <div className="text-xs font-semibold text-slate-700 mb-2 uppercase tracking-wide flex items-center gap-1.5">
+          <QrCode size={14} /> QR del Club de Fidelización
+        </div>
+        <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-start">
+          <Campo label="URL o ruta de la imagen">
+            <input
+              value={boleta.qrClub || ""}
+              onChange={(e) => set("qrClub", e.target.value)}
+              placeholder={NEGOCIO.qrClub || "https://… o /qr-club.png"}
+              className={inputCls}
+            />
+          </Campo>
+          <div className="flex flex-col gap-1.5 sm:pt-5">
+            <input
+              ref={fileQrRef}
+              type="file"
+              accept="image/*"
+              onChange={onElegirQr}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileQrRef.current?.click()}
+              className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm font-semibold"
+            >
+              <Upload size={14} /> Subir imagen
+            </button>
+            {boleta.qrClub && (
+              <button
+                type="button"
+                onClick={quitarQr}
+                className="flex items-center gap-1.5 border border-red-300 text-red-600 hover:bg-red-50 rounded-lg px-3 py-2 text-xs font-semibold"
+              >
+                <X size={14} /> Quitar
+              </button>
+            )}
+          </div>
+        </div>
+        {qrEfectivo && (
+          <div className="mt-2 flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <Image
+              src={qrEfectivo}
+              alt="Vista previa del QR"
+              width={64}
+              height={64}
+              unoptimized
+              className="rounded border border-slate-200 bg-white object-contain"
+            />
+            <span className="text-[11px] text-slate-500">
+              {boleta.qrClub
+                ? boleta.qrClub.startsWith("data:")
+                  ? "Imagen subida desde tu dispositivo."
+                  : "Usando URL personalizada."
+                : "Usando QR del negocio por defecto."}
+            </span>
+          </div>
+        )}
+      </div>
 
       <div className="grid sm:grid-cols-2 gap-3">
         <Campo label="Mensaje superior (bajo el nombre)">

@@ -34,11 +34,13 @@ import { money } from "@/lib/format";
 import { useAtajos } from "@/lib/useAtajos";
 import { Modal } from "@/components/Modal";
 import { useNegocio } from "@/lib/negocio-context";
+import { useVendedor } from "@/lib/vendedor";
 
 type Filtro = "todos" | "con" | "bajo" | "sin";
 
 export function StockScreen() {
   const NEGOCIO = useNegocio();
+  const vendedor = useVendedor();
   const [productos, setProductos] = useState<Producto[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
@@ -140,10 +142,10 @@ export function StockScreen() {
     const cambios = { stockActual: edStock, precio: edPrecio, barcode: edBarcode.trim() };
     const nuevoCodigo = edCodigo.trim();
     try {
-      await ajustarProducto(p.codigo, cambios);
+      await ajustarProducto(p.codigo, cambios, vendedor);
       // Si cambió el código, renombrar el documento (crear nuevo + borrar viejo).
       if (nuevoCodigo && nuevoCodigo !== p.codigo) {
-        await renombrarProducto(p.codigo, nuevoCodigo);
+        await renombrarProducto(p.codigo, nuevoCodigo, vendedor);
       }
     } catch (e) {
       setErrorEdicion(e instanceof Error ? e.message : "No se pudo guardar el cambio.");

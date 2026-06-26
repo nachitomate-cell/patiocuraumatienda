@@ -5,7 +5,7 @@ import { Receipt, Eye, EyeOff } from "lucide-react";
 import { BoletaEditor } from "@/components/BoletaEditor";
 import { Ticket } from "@/components/Ticket";
 import { getBoletaConfig, guardarBoletaConfig } from "@/lib/repo";
-import { useNegocio } from "@/lib/negocio-context";
+import { useNegocio, useRecargarNegocio } from "@/lib/negocio-context";
 import type { BoletaConfig } from "@/lib/negocio";
 
 // Página /boleta del POS: edita el formato y los textos de la boleta impresa
@@ -14,24 +14,37 @@ import type { BoletaConfig } from "@/lib/negocio";
 // reglas; el doc raíz del negocio sigue restringido a moderador).
 export function BoletaConfigScreen() {
   const NEGOCIO = useNegocio();
+  const recargarNegocio = useRecargarNegocio();
   const [inicial, setInicial] = useState<BoletaConfig | null>(null);
+  // `vivo` refleja en tiempo real lo que está editando el usuario para
+  // alimentar el preview del Ticket sin tener que esperar el save.
+  const [vivo, setVivo] = useState<BoletaConfig>({});
   const [cargando, setCargando] = useState(true);
   const [verPreview, setVerPreview] = useState(true);
 
   useEffect(() => {
     if (!NEGOCIO.slug) return;
     getBoletaConfig(NEGOCIO.slug)
-      .then((b) => setInicial(b || {}))
-      .catch(() => setInicial({}))
+      .then((b) => {
+        const cfg = b || {};
+        setInicial(cfg);
+        setVivo(cfg);
+      })
+      .catch(() => {
+        setInicial({});
+        setVivo({});
+      })
       .finally(() => setCargando(false));
   }, [NEGOCIO.slug]);
 
   async function guardar(cfg: BoletaConfig) {
     await guardarBoletaConfig(NEGOCIO.slug, cfg);
-    // Forzar re-render del Ticket: el preview lee del NEGOCIO context que se
-    // re-hidrata en el próximo paint del provider, pero para un feedback
-    // inmediato actualizamos también el estado local.
     setInicial(cfg);
+    setVivo(cfg);
+    // Vuelve a leer el branding completo desde Firestore para que el resto
+    // del POS (impresión real, historial, reimpresiones) tome la config
+    // recién guardada sin que el usuario tenga que recargar.
+    await recargarNegocio();
   }
 
   return (
@@ -63,7 +76,7 @@ export function BoletaConfigScreen() {
           {cargando ? (
             <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
           ) : (
-            <BoletaEditor inicial={inicial || {}} onGuardar={guardar} />
+            <BoletaEditor inicial={inicial || {}} onGuardar={guardar} onCambio={setVivo} />
           )}
         </div>
 
@@ -97,6 +110,7 @@ export function BoletaConfigScreen() {
                 total={2 * 3500 + 9990 * 0.9}
                 vendedor="Camila"
                 medioPago="efectivo"
+                cfgOverride={vivo}
               />
             </div>
           </aside>

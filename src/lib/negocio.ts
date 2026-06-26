@@ -38,6 +38,19 @@ export interface BoletaConfig {
   mensajeSuperior?: string;
   mensajeInferior?: string;
   textoGracias?: string;
+  // Overrides del branding solo para la boleta impresa. Si están definidos (y
+  // no son string vacío), reemplazan al campo equivalente del negocio. Esto
+  // permite que el operador del POS edite la boleta sin tocar el branding
+  // global (que solo el moderador puede modificar por reglas Firestore).
+  nombre?: string;
+  eslogan?: string;
+  rubro?: string;
+  ubicacion?: string;
+  web?: string;
+  instagram?: string;
+  // URL pública del QR del Club, o data URL (data:image/png;base64,...) cuando
+  // el operador sube una imagen desde la pantalla /boleta.
+  qrClub?: string;
   mostrarRubro?: boolean;
   mostrarUbicacion?: boolean;
   mostrarWeb?: boolean;

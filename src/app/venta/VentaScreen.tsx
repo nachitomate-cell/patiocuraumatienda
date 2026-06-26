@@ -28,6 +28,7 @@ import {
   listarClientes,
   crearCliente,
   todosLosProductos,
+  actualizarCodigoBoleta,
 } from "@/lib/repo";
 import {
   subtotalLinea,
@@ -74,6 +75,12 @@ export function VentaScreen() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [clienteId, setClienteId] = useState("");
   const [nuevoCliente, setNuevoCliente] = useState("");
+  // Folio externo de boleta. Se puede ingresar antes de confirmar (entra junto
+  // a la venta) o después (se persiste sobre la venta ya creada con un botón).
+  const [codigoBoleta, setCodigoBoleta] = useState("");
+  // Lo último persistido: si difiere del input visible, mostramos botón Guardar.
+  const [codigoBoletaGuardado, setCodigoBoletaGuardado] = useState("");
+  const [guardandoCod, setGuardandoCod] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const total = items.reduce((s, l) => s + subtotalLinea(l), 0);
@@ -284,6 +291,7 @@ export function VentaScreen() {
     try {
       const nuevoNro = await siguienteNroVenta();
       const cli = clientes.find((c) => c.id === clienteId);
+      const codBoleta = codigoBoleta.trim();
       const base = {
         nro: nuevoNro,
         fecha: hoyISO(),
@@ -292,6 +300,7 @@ export function VentaScreen() {
         total,
         vendedor,
         medioPago,
+        codigoBoleta: codBoleta,
       };
       await confirmarVenta(
         medioPago === "fiado"
@@ -299,6 +308,9 @@ export function VentaScreen() {
           : base
       );
       setNro(nuevoNro);
+      // Marcamos como guardado lo que se persistió con la venta para que el
+      // botón "Guardar código" no aparezca hasta que el usuario lo modifique.
+      setCodigoBoletaGuardado(codBoleta);
       setMsg(
         medioPago === "fiado"
           ? `Venta ${nuevoNro} fiada a ${cli?.nombre ?? "cliente"}.`
@@ -308,6 +320,25 @@ export function VentaScreen() {
       setMsg("Error al registrar la venta. Revise su conexión o reglas de Firestore.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Asocia un código de boleta a la venta YA confirmada (cuando se ingresa
+  // después de finalizar). Persiste sobre el doc existente y sincroniza el
+  // baseline para que desaparezca el botón.
+  async function guardarCodigoBoleta() {
+    if (nro === "NV-—") return;
+    setGuardandoCod(true);
+    setMsg("");
+    try {
+      const cod = codigoBoleta.trim();
+      await actualizarCodigoBoleta(nro, cod);
+      setCodigoBoletaGuardado(cod);
+      setMsg(cod ? `Código de boleta guardado en ${nro}.` : `Código de boleta borrado de ${nro}.`);
+    } catch {
+      setMsg("No se pudo guardar el código de boleta.");
+    } finally {
+      setGuardandoCod(false);
     }
   }
 
@@ -322,6 +353,8 @@ export function VentaScreen() {
     setMsg("");
     setMedioPago("efectivo");
     setClienteId("");
+    setCodigoBoleta("");
+    setCodigoBoletaGuardado("");
   }
 
   // Atajos de teclado de la pantalla de venta.
@@ -857,6 +890,38 @@ export function VentaScreen() {
             )}
           </div>
 
+          {/* Código de boleta (folio externo, opcional). Se puede ingresar
+              antes de confirmar para que entre con la venta, o después para
+              guardarlo sobre la venta ya creada. */}
+          <div className="mt-4">
+            <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">
+              Código de boleta (opcional)
+            </div>
+            <div className="flex gap-2">
+              <input
+                value={codigoBoleta}
+                onChange={(e) => setCodigoBoleta(e.target.value)}
+                placeholder="Folio de la boleta"
+                className="flex-1 border border-slate-300 rounded-lg px-3 py-2 bg-white/95 text-slate-900 placeholder:text-slate-400"
+              />
+              {nro !== "NV-—" && codigoBoleta.trim() !== codigoBoletaGuardado.trim() && (
+                <button
+                  onClick={guardarCodigoBoleta}
+                  disabled={guardandoCod}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-3 py-2 text-sm flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+                  title="Guardar el código en la venta ya confirmada"
+                >
+                  <Check size={16} /> {guardandoCod ? "…" : "Guardar"}
+                </button>
+              )}
+            </div>
+            {nro !== "NV-—" && (
+              <p className="text-[11px] text-slate-400 mt-1">
+                Asociado a <span className="font-mono">{nro}</span>.
+              </p>
+            )}
+          </div>
+
           <div className="mt-4 grid grid-cols-2 gap-2">
             <button
               onClick={confirmar}
@@ -894,6 +959,7 @@ export function VentaScreen() {
             cliente={cliente || "Consumidor Final"}
             items={items}
             total={total}
+            codigoBoleta={codigoBoleta}
           />
         </div>
       </div>

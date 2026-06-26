@@ -29,9 +29,11 @@ import {
 import type { Emprendedor, Producto } from "@/lib/types";
 import { Modal } from "@/components/Modal";
 import { useNegocio } from "@/lib/negocio-context";
+import { useVendedor } from "@/lib/vendedor";
 
 export function EmprendedoresScreen() {
   const NEGOCIO = useNegocio();
+  const vendedor = useVendedor();
   const [lista, setLista] = useState<Emprendedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -104,7 +106,7 @@ export function EmprendedoresScreen() {
     setBusy(true);
     setError("");
     try {
-      await crearEmprendedor(n, contacto, telefono, prefijo);
+      await crearEmprendedor(n, contacto, telefono, prefijo, vendedor);
       setNombre("");
       setPrefijo("");
       setPrefijoTocado(false);
@@ -133,12 +135,16 @@ export function EmprendedoresScreen() {
     setBusy(true);
     setError("");
     try {
-      await actualizarEmprendedor(editId, {
-        nombre: edNombre,
-        prefijo: edPrefijo,
-        contacto: edContacto,
-        telefono: edTelefono,
-      });
+      await actualizarEmprendedor(
+        editId,
+        {
+          nombre: edNombre,
+          prefijo: edPrefijo,
+          contacto: edContacto,
+          telefono: edTelefono,
+        },
+        vendedor
+      );
       setEditId(null);
       await cargar();
     } catch (e) {
@@ -166,7 +172,7 @@ export function EmprendedoresScreen() {
     const proximo = e.activo === false; // hoy inactivo -> activarlo
     setBusy(true);
     try {
-      await setEmprendedorActivo(e.id, proximo);
+      await setEmprendedorActivo(e.id, proximo, vendedor);
       await cargar();
     } finally {
       setBusy(false);

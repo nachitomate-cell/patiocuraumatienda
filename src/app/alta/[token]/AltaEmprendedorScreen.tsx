@@ -12,6 +12,7 @@ import {
   Download,
   Loader2,
   RefreshCw,
+  History,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -20,16 +21,19 @@ import {
   productosDeEmprendedor,
   ventasDeEmprendedor,
   actualizarProductoEmprendedor,
+  movimientosDeEmprendedor,
 } from "@/lib/repo";
 import {
   subtotalLinea,
   type Emprendedor,
+  type MovimientoEmprendedor,
   type Producto,
   type Venta,
 } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
 import { useNegocio } from "@/lib/negocio-context";
 import { useAuth } from "@/lib/auth";
+import { HistorialMovs } from "@/components/HistorialMovs";
 
 export function AltaEmprendedorScreen({ token }: { token: string }) {
   const { user, loading } = useAuth();
@@ -37,9 +41,10 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [emp, setEmp] = useState<Emprendedor | null>(null);
   const [estado, setEstado] = useState<"cargando" | "ok" | "invalido" | "inactivo">("cargando");
 
-  // Estado del servidor (productos + ventas del emprendedor).
+  // Estado del servidor (productos + ventas + bitácora del emprendedor).
   const [productos, setProductos] = useState<Producto[]>([]);
   const [ventas, setVentas] = useState<Venta[]>([]);
+  const [movs, setMovs] = useState<MovimientoEmprendedor[]>([]);
   const [cargandoDatos, setCargandoDatos] = useState(false);
 
   // Formulario "agregar producto".
@@ -85,19 +90,32 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user, loading]);
 
+  // Refresca solo la bitácora (tras agregar/editar): evita releer ventas y
+  // catálogo cuando lo único que cambió es el log. Falla silenciosamente.
+  async function refrescarHistorial(empId: string) {
+    try {
+      const ms = await movimientosDeEmprendedor(empId, 100);
+      setMovs(ms);
+    } catch {
+      // no-op
+    }
+  }
+
   async function cargarDatos(e: Emprendedor) {
     setCargandoDatos(true);
     try {
       // Pasamos id + prefijo: la query usa AMBOS para alcanzar productos
       // legacy migrados sin emprendedorId estampado.
       const target = { id: e.id, prefijo: e.prefijo };
-      const [prods, vs] = await Promise.all([
+      const [prods, vs, ms] = await Promise.all([
         productosDeEmprendedor(target),
         ventasDeEmprendedor(target),
+        movimientosDeEmprendedor(e.id, 100),
       ]);
       prods.sort((a, b) => a.codigo.localeCompare(b.codigo));
       setProductos(prods);
       setVentas(vs);
+      setMovs(ms);
     } finally {
       setCargandoDatos(false);
     }
@@ -159,11 +177,12 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setBusy(true);
     setMsg("");
     try {
-      const cod = await agregarProductoEmprendedor(emp, {
-        descripcion,
-        precio,
-        stock,
-      });
+      const cod = await agregarProductoEmprendedor(
+        emp,
+        { descripcion, precio, stock },
+        "emprendedor",
+        emp.nombre
+      );
       setMsg(`✅ "${descripcion}" agregado (código ${cod}).`);
       setProductos((prev) =>
         [
@@ -182,6 +201,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setDescripcion("");
       setPrecio(0);
       setStock(1);
+      refrescarHistorial(emp.id);
     } catch {
       setMsg("No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.");
     } finally {
@@ -203,11 +223,17 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setBusyEdit(true);
     setEditErr("");
     try {
-      await actualizarProductoEmprendedor(emp.id, editCodigo, {
-        descripcion: edDescripcion,
-        precio: edPrecio,
-        stockActual: edStock,
-      });
+      await actualizarProductoEmprendedor(
+        emp.id,
+        editCodigo,
+        {
+          descripcion: edDescripcion,
+          precio: edPrecio,
+          stockActual: edStock,
+        },
+        "emprendedor",
+        emp.nombre
+      );
       setProductos((prev) =>
         prev.map((p) =>
           p.codigo === editCodigo
@@ -221,6 +247,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         )
       );
       setEditCodigo(null);
+      refrescarHistorial(emp.id);
     } catch (e) {
       setEditErr(e instanceof Error ? e.message : "No se pudo guardar.");
     } finally {
@@ -624,6 +651,22 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 );
               })}
             </ul>
+          )}
+        </div>
+
+        {/* Historial de cambios */}
+        <div className="bg-white rounded-xl shadow p-5 anim-in">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+            <History className="text-violet-600" size={20} /> Historial de cambios (
+            {movs.length})
+          </h2>
+          {cargandoDatos && movs.length === 0 ? (
+            <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
+          ) : (
+            <HistorialMovs
+              movs={movs}
+              vacio="Aún no hay movimientos registrados."
+            />
           )}
         </div>
 

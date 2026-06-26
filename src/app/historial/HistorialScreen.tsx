@@ -29,6 +29,7 @@ import {
   cajaAbierta,
   ventasEnRango,
   devolucionesEnRango,
+  actualizarCodigoBoleta,
 } from "@/lib/repo";
 import {
   subtotalLinea,
@@ -98,7 +99,8 @@ export function HistorialScreen() {
       return (
         v.nro.toLowerCase().includes(t) ||
         (v.cliente || "").toLowerCase().includes(t) ||
-        (v.vendedor || "").toLowerCase().includes(t)
+        (v.vendedor || "").toLowerCase().includes(t) ||
+        (v.codigoBoleta || "").toLowerCase().includes(t)
       );
     });
   }, [ventas, term, desde, hasta]);
@@ -129,6 +131,7 @@ export function HistorialScreen() {
         Fecha: v.fecha,
         Cliente: v.cliente,
         Vendedor: v.vendedor ?? "",
+        "Código boleta": v.codigoBoleta ?? "",
         Codigo: l.codigo,
         Descripcion: l.descripcion,
         Cantidad: l.cantidad,
@@ -173,6 +176,7 @@ export function HistorialScreen() {
           Cliente: v.cliente,
           Vendedor: v.vendedor ?? "",
           "Medio de pago": v.medioPago ?? "",
+          "Código boleta": v.codigoBoleta ?? "",
           Anulada: v.anulada ? "Sí" : "",
           "Motivo anulación": v.anulada?.motivo ?? "",
           Codigo: l.codigo,
@@ -325,7 +329,7 @@ export function HistorialScreen() {
             <input
               value={term}
               onChange={(e) => setTerm(e.target.value)}
-              placeholder="Buscar por N° venta, cliente o vendedor…"
+              placeholder="Buscar por N° venta, cliente, vendedor o código de boleta…"
               className="w-full border rounded-lg pl-9 pr-3 py-2"
             />
           </div>
@@ -409,6 +413,11 @@ export function HistorialScreen() {
                   onDevolver={() => setDevolver(v)}
                   onImprimir={() => setImprimir(v)}
                   onAnular={() => setAnular(v)}
+                  onCodigoBoletaActualizado={(codigo) =>
+                    setVentas((prev) =>
+                      prev.map((x) => (x.nro === v.nro ? { ...x, codigoBoleta: codigo } : x))
+                    )
+                  }
                 />
               );
             })}
@@ -453,6 +462,7 @@ function FilaVenta({
   onDevolver,
   onImprimir,
   onAnular,
+  onCodigoBoletaActualizado,
 }: {
   venta: Venta;
   devoluciones: Devolucion[];
@@ -461,7 +471,31 @@ function FilaVenta({
   onDevolver: () => void;
   onImprimir: () => void;
   onAnular: () => void;
+  onCodigoBoletaActualizado: (codigo: string) => void;
 }) {
+  // Estado local del editor inline para el código de boleta. Se re-syncea
+  // cuando la venta cambia (ej. tras refrescar o tras guardar).
+  const [edCodBoleta, setEdCodBoleta] = useState(v.codigoBoleta || "");
+  const [guardandoCod, setGuardandoCod] = useState(false);
+  const [errCodBoleta, setErrCodBoleta] = useState("");
+  useEffect(() => {
+    setEdCodBoleta(v.codigoBoleta || "");
+  }, [v.codigoBoleta]);
+
+  async function guardarCodigoBoleta() {
+    const cod = edCodBoleta.trim();
+    setGuardandoCod(true);
+    setErrCodBoleta("");
+    try {
+      await actualizarCodigoBoleta(v.nro, cod);
+      onCodigoBoletaActualizado(cod);
+    } catch (e) {
+      setErrCodBoleta(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setGuardandoCod(false);
+    }
+  }
+
   // Cuánto se ha devuelto por cada línea (por código, suma de cantidades).
   // Para líneas manuales (sin código) usamos la descripción como clave.
   const devueltoPorClave = useMemo(() => {
@@ -492,6 +526,14 @@ function FilaVenta({
         </td>
         <td className={`px-3 py-2 font-mono ${anulada ? "line-through text-slate-400" : ""}`}>
           {v.nro}
+          {v.codigoBoleta && (
+            <span
+              className="ml-2 text-[10px] font-semibold uppercase tracking-wide rounded px-1.5 py-0.5 bg-cyan-100 text-cyan-800 font-sans"
+              title={`Código de boleta: ${v.codigoBoleta}`}
+            >
+              B·{v.codigoBoleta}
+            </span>
+          )}
         </td>
         <td className={`px-3 py-2 ${anulada ? "text-slate-400" : ""}`}>{v.fecha}</td>
         <td className="px-3 py-2">
@@ -585,6 +627,35 @@ function FilaVenta({
                 </ul>
               </div>
             )}
+
+            {/* Editor inline del código de boleta: si ya existe queda
+                pre-rellenado y editable; si está vacío, agregar uno. El botón
+                Guardar aparece solo cuando difiere del actual. */}
+            <div className="mt-3 border-t border-slate-200 pt-2 flex items-center gap-2 text-xs flex-wrap">
+              <span className="text-slate-500 font-semibold">Código de boleta:</span>
+              <input
+                value={edCodBoleta}
+                onChange={(e) => setEdCodBoleta(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="Folio de la boleta"
+                className="border border-slate-300 rounded-lg px-2 py-1 text-xs min-w-[160px]"
+              />
+              {edCodBoleta.trim() !== (v.codigoBoleta || "").trim() && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    guardarCodigoBoleta();
+                  }}
+                  disabled={guardandoCod}
+                  className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-2.5 py-1 text-xs disabled:opacity-50"
+                >
+                  {guardandoCod ? "…" : "Guardar"}
+                </button>
+              )}
+              {errCodBoleta && (
+                <span className="text-red-600 text-[11px]">{errCodBoleta}</span>
+              )}
+            </div>
 
             <div className="mt-2 flex items-center justify-between gap-2 text-xs">
               {v.vendedor && (
@@ -859,6 +930,7 @@ function ModalImprimirBoleta({
               total={venta.total}
               vendedor={venta.vendedor}
               medioPago={venta.medioPago}
+              codigoBoleta={venta.codigoBoleta}
             />
           </div>
           <p className="text-xs text-slate-500 text-center">

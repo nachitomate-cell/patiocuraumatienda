@@ -28,6 +28,7 @@ import {
   type Entrada,
   type LineaEntrada,
   type LineaVenta,
+  type MovimientoEmprendedor,
   type MovimientoFiado,
   type Producto,
   type Retiro,
@@ -45,6 +46,7 @@ const CONTADORES = "contadores";
 const CONFIG = "config";
 const CAJAS = "cajas";
 const DEVOLUCIONES = "devoluciones";
+const MOVIMIENTOS_EMP = "movimientos";
 
 // ===== Helpers de tenant =====
 // Todas las colecciones del negocio cuelgan de negocios/{negocioId}/... Estos
@@ -163,13 +165,72 @@ export async function todosLosProductos(force = false): Promise<Producto[]> {
   return _catalogo;
 }
 
-// Ajuste manual de un producto (stock, precio o costo).
+// Ajuste manual de un producto (stock, precio o costo). Si el producto pertenece
+// a un emprendedor, deja registro en su bitácora con el actor que lo cambió.
 export async function ajustarProducto(
   codigo: string,
-  cambios: Partial<Producto>
+  cambios: Partial<Producto>,
+  quien = ""
 ): Promise<void> {
-  await setDoc(tdoc(PRODUCTOS, codigo.trim()), cambios, { merge: true });
-  parchearProducto(codigo, cambios);
+  const cod = codigo.trim();
+  const ref = tdoc(PRODUCTOS, cod);
+  // Snapshot anterior para comparar y registrar (si pertenece a un emprendedor).
+  const snapAntes = await getDoc(ref);
+  const antes = snapAntes.exists() ? (snapAntes.data() as Producto) : null;
+  await setDoc(ref, cambios, { merge: true });
+  parchearProducto(cod, cambios);
+
+  if (!antes?.emprendedorId) return;
+  const empId = antes.emprendedorId;
+  const ahora = Date.now();
+  const por = quien || "Admin";
+  const desc = (cambios.descripcion ?? antes.descripcion) || "";
+
+  if (cambios.precio !== undefined && Number(cambios.precio) !== Number(antes.precio ?? 0)) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen: "admin",
+      accion: "precio_cambiado",
+      codigo: cod, descripcion: desc,
+      antes: String(antes.precio ?? 0),
+      despues: String(cambios.precio),
+    });
+  }
+  if (cambios.stockActual !== undefined && Number(cambios.stockActual) !== Number(antes.stockActual ?? 0)) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen: "admin",
+      accion: "stock_cambiado",
+      codigo: cod, descripcion: desc,
+      antes: String(antes.stockActual ?? 0),
+      despues: String(cambios.stockActual),
+    });
+  }
+  if (cambios.costo !== undefined && Number(cambios.costo) !== Number(antes.costo ?? 0)) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen: "admin",
+      accion: "costo_cambiado",
+      codigo: cod, descripcion: desc,
+      antes: String(antes.costo ?? 0),
+      despues: String(cambios.costo),
+    });
+  }
+  if (cambios.descripcion !== undefined && cambios.descripcion !== (antes.descripcion ?? "")) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen: "admin",
+      accion: "descripcion_cambiada",
+      codigo: cod, descripcion: cambios.descripcion,
+      antes: String(antes.descripcion ?? ""),
+      despues: String(cambios.descripcion),
+    });
+  }
+  if (cambios.barcode !== undefined && (cambios.barcode ?? "") !== (antes.barcode ?? "")) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen: "admin",
+      accion: "barcode_cambiado",
+      codigo: cod, descripcion: desc,
+      antes: String(antes.barcode ?? ""),
+      despues: String(cambios.barcode ?? ""),
+    });
+  }
 }
 
 // ===== Códigos: normalización y renombrado =====
@@ -194,7 +255,11 @@ export function normalizarCodigo(codigo: string): string {
 // renombrar in situ: hay que crear el nuevo y borrar el viejo). Atómico, y
 // valida que el destino no esté ocupado. No actualiza referencias históricas
 // (ventas/entradas guardan el código como etiqueta, no como vínculo).
-export async function renombrarProducto(viejo: string, nuevo: string): Promise<void> {
+export async function renombrarProducto(
+  viejo: string,
+  nuevo: string,
+  quien = ""
+): Promise<void> {
   const db = getDb();
   const codViejo = viejo.trim();
   const codNuevo = nuevo.trim();
@@ -202,6 +267,9 @@ export async function renombrarProducto(viejo: string, nuevo: string): Promise<v
   if (codNuevo === codViejo) return;
   const refViejo = tdoc(PRODUCTOS, codViejo);
   const refNuevo = tdoc(PRODUCTOS, codNuevo);
+  // Capturamos el doc original fuera de la transacción para conocer el dueño
+  // (la transacción solo trae snapViejo a su scope local).
+  const snapAntes = await getDoc(refViejo);
   await runTransaction(db, async (tx) => {
     const snapViejo = await tx.get(refViejo);
     if (!snapViejo.exists()) throw new Error(`El producto ${codViejo} no existe.`);
@@ -213,6 +281,20 @@ export async function renombrarProducto(viejo: string, nuevo: string): Promise<v
     tx.delete(refViejo);
   });
   invalidarCatalogo();
+
+  const antes = snapAntes.exists() ? (snapAntes.data() as Producto) : null;
+  if (antes?.emprendedorId) {
+    await registrarMovEmp(antes.emprendedorId, {
+      en: Date.now(),
+      por: quien || "Admin",
+      origen: "admin",
+      accion: "codigo_renombrado",
+      codigo: codNuevo,
+      descripcion: antes.descripcion ?? "",
+      antes: codViejo,
+      despues: codNuevo,
+    });
+  }
 }
 
 export interface CambioCodigo {
@@ -438,6 +520,43 @@ export async function movimientosCliente(
   return snap.docs.map((d) => d.data() as MovimientoFiado);
 }
 
+// ===== Bitácora del emprendedor =====
+// Cada cambio sobre un producto del emprendedor o sobre su ficha se asienta
+// como un documento en negocios/{slug}/emprendedores/{id}/movimientos. Lo
+// consumen el portal del emprendedor (/alta/{token}) y el CRM (historial por
+// emprendedor). No bloquea la operación si falla: el log es accesorio.
+
+async function registrarMovEmp(
+  empId: string,
+  datos: MovimientoEmprendedor
+): Promise<void> {
+  if (!empId) return;
+  // Firestore rechaza undefined. Limpiamos antes de persistir.
+  const limpio: Record<string, unknown> = { ...datos };
+  for (const k of Object.keys(limpio)) {
+    if (limpio[k] === undefined) delete limpio[k];
+  }
+  try {
+    await addDoc(tcol(EMPRENDEDORES, empId, MOVIMIENTOS_EMP), limpio);
+  } catch {
+    // No interrumpe el flujo del usuario si el log falla (red, permisos, etc.).
+  }
+}
+
+export async function movimientosDeEmprendedor(
+  empId: string,
+  max = 200
+): Promise<MovimientoEmprendedor[]> {
+  if (!empId) return [];
+  const q = query(
+    tcol(EMPRENDEDORES, empId, MOVIMIENTOS_EMP),
+    orderBy("en", "desc"),
+    limit(max)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as MovimientoEmprendedor);
+}
+
 // ===== Emprendedores (consignación) =====
 
 // Normaliza un prefijo: solo letras/números en MAYÚSCULA (ej. "amon" -> "AMON").
@@ -474,7 +593,8 @@ export async function crearEmprendedor(
   nombre: string,
   contacto = "",
   telefono = "",
-  prefijo = ""
+  prefijo = "",
+  quien = ""
 ): Promise<Emprendedor> {
   const existentes = await listarEmprendedores();
   const usados = existentes.map((e) => e.prefijo);
@@ -496,14 +616,26 @@ export async function crearEmprendedor(
     creadoEn: Date.now(),
   };
   await setDoc(tdoc(EMPRENDEDORES, token), datos);
+  await registrarMovEmp(token, {
+    en: Date.now(),
+    por: quien || "Admin",
+    origen: "admin",
+    accion: "emprendedor_creado",
+    despues: `${datos.nombre} (${pref})`,
+  });
   return { id: token, ...datos };
 }
 
 // Edita los datos de un emprendedor. Si cambia el prefijo, valida unicidad.
 export async function actualizarEmprendedor(
   id: string,
-  cambios: Partial<Pick<Emprendedor, "nombre" | "contacto" | "telefono" | "prefijo">>
+  cambios: Partial<Pick<Emprendedor, "nombre" | "contacto" | "telefono" | "prefijo">>,
+  quien = ""
 ): Promise<void> {
+  // Snapshot anterior para registrar cambios efectivos campo por campo.
+  const snapAntes = await getDoc(tdoc(EMPRENDEDORES, id));
+  const antes = snapAntes.exists() ? (snapAntes.data() as Emprendedor) : null;
+
   const datos: Record<string, string> = {};
   if (cambios.nombre !== undefined) datos.nombre = cambios.nombre.trim();
   if (cambios.contacto !== undefined) datos.contacto = cambios.contacto.trim();
@@ -518,6 +650,31 @@ export async function actualizarEmprendedor(
     datos.prefijo = pref;
   }
   await setDoc(tdoc(EMPRENDEDORES, id), datos, { merge: true });
+
+  // Una entrada por campo realmente modificado: lo que NO cambió no se loguea.
+  const ahora = Date.now();
+  const por = quien || "Admin";
+  const campos: Array<["nombre" | "contacto" | "telefono" | "prefijo", string]> = [
+    ["nombre", "nombre"],
+    ["contacto", "contacto"],
+    ["telefono", "teléfono"],
+    ["prefijo", "prefijo"],
+  ];
+  for (const [k, label] of campos) {
+    if (!(k in datos)) continue;
+    const a = (antes?.[k] as string | undefined) ?? "";
+    const b = datos[k] ?? "";
+    if (a === b) continue;
+    await registrarMovEmp(id, {
+      en: ahora,
+      por,
+      origen: "admin",
+      accion: "emprendedor_editado",
+      descripcion: label,
+      antes: a,
+      despues: b,
+    });
+  }
 }
 
 // Elimina un emprendedor. Sus productos permanecen en el catálogo.
@@ -528,8 +685,18 @@ export async function eliminarEmprendedor(id: string): Promise<void> {
 // Marca un emprendedor como activo o inactivo. Inactivo: NO puede cargar más
 // productos desde /alta/{token} y se separa visualmente en /emprendedores.
 // Sus productos en el catálogo siguen vivos (no se tocan).
-export async function setEmprendedorActivo(id: string, activo: boolean): Promise<void> {
+export async function setEmprendedorActivo(
+  id: string,
+  activo: boolean,
+  quien = ""
+): Promise<void> {
   await setDoc(tdoc(EMPRENDEDORES, id), { activo }, { merge: true });
+  await registrarMovEmp(id, {
+    en: Date.now(),
+    por: quien || "Admin",
+    origen: "admin",
+    accion: activo ? "emprendedor_activado" : "emprendedor_pausado",
+  });
 }
 
 export async function getEmprendedorPorToken(
@@ -542,9 +709,12 @@ export async function getEmprendedorPorToken(
 }
 
 // El emprendedor agrega un producto: se crea en el stock real con código único.
+// origen distingue si lo cargó el propio emprendedor (/alta) o un admin (POS).
 export async function agregarProductoEmprendedor(
   emp: Emprendedor,
-  datos: { descripcion: string; precio: number; costo?: number; stock?: number }
+  datos: { descripcion: string; precio: number; costo?: number; stock?: number },
+  origen: "emprendedor" | "admin" = "emprendedor",
+  quien = ""
 ): Promise<string> {
   const db = getDb();
   const empRef = tdoc(EMPRENDEDORES, emp.id);
@@ -566,6 +736,15 @@ export async function agregarProductoEmprendedor(
     return cod;
   });
   invalidarCatalogo(); // producto nuevo en el catálogo
+  await registrarMovEmp(emp.id, {
+    en: Date.now(),
+    por: quien || (origen === "emprendedor" ? emp.nombre : "Admin"),
+    origen,
+    accion: "producto_agregado",
+    codigo,
+    descripcion: datos.descripcion.trim(),
+    despues: `precio ${datos.precio} · stock ${datos.stock ?? 0}`,
+  });
   return codigo;
 }
 
@@ -611,7 +790,9 @@ export async function productosDeEmprendedor(
 export async function actualizarProductoEmprendedor(
   empId: string,
   codigo: string,
-  cambios: { precio?: number; stockActual?: number; descripcion?: string }
+  cambios: { precio?: number; stockActual?: number; descripcion?: string },
+  origen: "emprendedor" | "admin" = "emprendedor",
+  quien = ""
 ): Promise<void> {
   const cod = codigo.trim();
   if (!cod) throw new Error("Falta el código del producto.");
@@ -637,6 +818,40 @@ export async function actualizarProductoEmprendedor(
   if (Object.keys(limpio).length === 0) return;
   await setDoc(ref, limpio, { merge: true });
   parchearProducto(cod, limpio as Partial<Producto>);
+
+  // Una entrada por campo realmente modificado (comparamos contra snapshot).
+  const ahora = Date.now();
+  const por = quien || (origen === "emprendedor" ? p.emprendedorNombre || "Emprendedor" : "Admin");
+  if ("descripcion" in limpio && (limpio.descripcion as string) !== (p.descripcion ?? "")) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen,
+      accion: "descripcion_cambiada",
+      codigo: cod,
+      descripcion: limpio.descripcion as string,
+      antes: String(p.descripcion ?? ""),
+      despues: String(limpio.descripcion),
+    });
+  }
+  if ("precio" in limpio && (limpio.precio as number) !== (p.precio ?? 0)) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen,
+      accion: "precio_cambiado",
+      codigo: cod,
+      descripcion: (limpio.descripcion as string) ?? p.descripcion,
+      antes: String(p.precio ?? 0),
+      despues: String(limpio.precio),
+    });
+  }
+  if ("stockActual" in limpio && (limpio.stockActual as number) !== (p.stockActual ?? 0)) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen,
+      accion: "stock_cambiado",
+      codigo: cod,
+      descripcion: (limpio.descripcion as string) ?? p.descripcion,
+      antes: String(p.stockActual ?? 0),
+      despues: String(limpio.stockActual),
+    });
+  }
 }
 
 // Ventas que tienen al menos una línea de este emprendedor (filtra las
@@ -664,6 +879,16 @@ export async function ventasDeEmprendedor(
       ),
     }))
     .filter((v) => v.items.length > 0);
+}
+
+// Asigna o reemplaza el código de boleta de una venta ya registrada. Pasar
+// string vacío borra el código (lo deja como undefined en la lectura).
+export async function actualizarCodigoBoleta(
+  nro: string,
+  codigo: string
+): Promise<void> {
+  const cod = (codigo || "").trim();
+  await setDoc(tdoc(VENTAS, nro), { codigoBoleta: cod }, { merge: true });
 }
 
 export async function ultimasVentas(max = 20): Promise<Venta[]> {
