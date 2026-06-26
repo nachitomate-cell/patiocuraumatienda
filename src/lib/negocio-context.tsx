@@ -20,6 +20,25 @@ function logoPorDefecto(slug: string): string {
   return slug ? `/logos/${slug}.png` : "/logo.png";
 }
 
+// Valida que el valor sea una ruta web servible por Next: absoluta http(s)
+// o relativa al root con "/". Cualquier otra cosa (ruta de filesystem que el
+// admin pegó en el panel, string vacío, basura) cae al default por slug. Sin
+// esto, <Image> revienta con "Failed to construct 'URL'".
+function logoValido(valor: string | undefined | null, slug: string): string {
+  return rutaWebOVacio(valor) || logoPorDefecto(slug);
+}
+
+// Devuelve la ruta solo si es web servible (absoluta http(s) o /relativa);
+// si no, "". Útil para campos opcionales tipo fondoLogin: si está vacío o es
+// basura (p. ej. el admin pegó "C:\..."), queda vacío y la UI no la usa.
+function rutaWebOVacio(valor: string | undefined | null): string {
+  const v = (valor || "").trim().replace(/^"+|"+$/g, "");
+  if (v.startsWith("/") || v.startsWith("http://") || v.startsWith("https://")) {
+    return v;
+  }
+  return "";
+}
+
 function neutro(slug: string): Branding {
   return {
     nombre: slug,
@@ -74,8 +93,8 @@ export function NegocioProvider({ children }: { children: ReactNode }) {
         web: n.web || "",
         instagram: n.instagram || "",
         emailPlaceholder: n.emailPlaceholder || "correo@ejemplo.cl",
-        logo: n.logo || logoPorDefecto(slug),
-        fondoLogin: n.fondoLogin || "",
+        logo: logoValido(n.logo, slug),
+        fondoLogin: rutaWebOVacio(n.fondoLogin),
         qrClub: n.qrClub || "",
         slug: n.slug || slug,
         boleta: boletaSub ?? n.boleta,

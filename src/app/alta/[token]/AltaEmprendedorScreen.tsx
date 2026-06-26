@@ -13,6 +13,9 @@ import {
   Loader2,
   RefreshCw,
   History,
+  Search,
+  PackagePlus,
+  PackageMinus,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -65,6 +68,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [edVence, setEdVence] = useState("");
   const [busyEdit, setBusyEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
+
+  // Buscador y ajuste rápido de stock (recibí / retiré).
+  const [busqueda, setBusqueda] = useState("");
+  const [quickCodigo, setQuickCodigo] = useState<string | null>(null);
+  const [quickTipo, setQuickTipo] = useState<"in" | "out">("in");
+  const [quickCantidad, setQuickCantidad] = useState(1);
+  const [busyQuick, setBusyQuick] = useState(false);
+  const [quickErr, setQuickErr] = useState("");
 
   const [descargando, setDescargando] = useState(false);
 
@@ -223,6 +234,62 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setEdStock(p.stockActual || 0);
     setEdVence(p.vence || "");
     setEditErr("");
+    setQuickCodigo(null);
+  }
+
+  // Lista filtrada por el buscador. Match en código o descripción (case-insensitive).
+  const productosFiltrados = useMemo(() => {
+    const t = busqueda.trim().toLowerCase();
+    if (!t) return productos;
+    return productos.filter(
+      (p) =>
+        p.codigo.toLowerCase().includes(t) ||
+        (p.descripcion || "").toLowerCase().includes(t)
+    );
+  }, [productos, busqueda]);
+
+  // ===== Ajuste rápido de stock (recibí / retiré) =====
+  function abrirQuick(p: Producto, tipo: "in" | "out") {
+    setQuickCodigo(p.codigo);
+    setQuickTipo(tipo);
+    setQuickCantidad(1);
+    setQuickErr("");
+    setEditCodigo(null);
+  }
+
+  async function confirmarQuick(p: Producto) {
+    if (!emp) return;
+    const n = Math.max(0, Math.round(quickCantidad || 0));
+    if (n <= 0) {
+      setQuickErr("Ingresa una cantidad mayor a 0.");
+      return;
+    }
+    const actual = p.stockActual || 0;
+    const nuevo = quickTipo === "in" ? actual + n : actual - n;
+    if (nuevo < 0) {
+      setQuickErr(`No puedes retirar ${n}: solo tienes ${actual} en stock.`);
+      return;
+    }
+    setBusyQuick(true);
+    setQuickErr("");
+    try {
+      await actualizarProductoEmprendedor(
+        emp.id,
+        p.codigo,
+        { stockActual: nuevo },
+        "emprendedor",
+        emp.nombre
+      );
+      setProductos((prev) =>
+        prev.map((x) => (x.codigo === p.codigo ? { ...x, stockActual: nuevo } : x))
+      );
+      setQuickCodigo(null);
+      refrescarHistorial(emp.id);
+    } catch (e) {
+      setQuickErr(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setBusyQuick(false);
+    }
   }
 
   async function guardarEdicion() {
@@ -572,15 +639,43 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             <PackageCheck className="text-emerald-600" size={20} /> Mi inventario (
             {productos.length})
           </h2>
+          {productos.length > 0 && (
+            <div className="relative mb-3">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar por nombre o código…"
+                className="w-full border rounded-lg pl-9 pr-9 py-2 text-sm"
+              />
+              {busqueda && (
+                <button
+                  type="button"
+                  onClick={() => setBusqueda("")}
+                  aria-label="Limpiar búsqueda"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          )}
           {cargandoDatos && productos.length === 0 ? (
             <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
           ) : productos.length === 0 ? (
             <p className="text-slate-400 text-sm py-3 text-center">
               Aún no tienes productos cargados.
             </p>
+          ) : productosFiltrados.length === 0 ? (
+            <p className="text-slate-400 text-sm py-3 text-center">
+              Ningún producto coincide con &quot;{busqueda}&quot;.
+            </p>
           ) : (
             <ul className="divide-y">
-              {productos.map((p) => {
+              {productosFiltrados.map((p) => {
                 const enEdicion = editCodigo === p.codigo;
                 const stats = ventasPorCodigo.get(p.codigo) || { unidades: 0, total: 0 };
                 if (enEdicion) {
@@ -652,37 +747,103 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                   );
                 }
                 const ev = estadoVence(p.vence);
+                const enQuick = quickCodigo === p.codigo;
                 return (
-                  <li
-                    key={p.codigo}
-                    className="py-2 flex items-center justify-between gap-3 text-sm"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-medium text-slate-800 truncate">
-                        {p.descripcion}
+                  <li key={p.codigo} className="py-2 text-sm">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-800 truncate">
+                          {p.descripcion}
+                        </div>
+                        <div className="text-xs text-slate-500 flex flex-wrap gap-x-2 items-center">
+                          <span className="font-mono">{p.codigo}</span>
+                          <span>· {p.stockActual} u.</span>
+                          <span>· {money(p.precio)}</span>
+                          {stats.unidades > 0 && (
+                            <span className="text-emerald-700">
+                              · vendidas {stats.unidades}
+                            </span>
+                          )}
+                          {ev && (
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${ev.bgText}`}>
+                              {ev.label}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-500 flex flex-wrap gap-x-2 items-center">
-                        <span className="font-mono">{p.codigo}</span>
-                        <span>· {p.stockActual} u.</span>
-                        <span>· {money(p.precio)}</span>
-                        {stats.unidades > 0 && (
-                          <span className="text-emerald-700">
-                            · vendidas {stats.unidades}
-                          </span>
-                        )}
-                        {ev && (
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${ev.bgText}`}>
-                            {ev.label}
-                          </span>
-                        )}
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => abrirQuick(p, "in")}
+                          title="Recibí más unidades"
+                          className="flex items-center gap-1 border border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-lg px-2 py-1.5 text-xs"
+                        >
+                          <PackagePlus size={14} /> Recibí
+                        </button>
+                        <button
+                          onClick={() => abrirQuick(p, "out")}
+                          title="Me llevé / retiré unidades"
+                          className="flex items-center gap-1 border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-2 py-1.5 text-xs"
+                        >
+                          <PackageMinus size={14} /> Retiré
+                        </button>
+                        <button
+                          onClick={() => abrirEdicion(p)}
+                          title="Editar ficha completa"
+                          className="flex items-center gap-1 border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg px-2 py-1.5 text-xs"
+                        >
+                          <Pencil size={14} />
+                        </button>
                       </div>
                     </div>
-                    <button
-                      onClick={() => abrirEdicion(p)}
-                      className="flex items-center gap-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 rounded-lg px-3 py-1.5 text-xs shrink-0"
-                    >
-                      <Pencil size={14} /> Editar
-                    </button>
+                    {enQuick && (
+                      <div className="mt-2 flex items-center gap-2 anim-pop">
+                        <span className="text-xs text-slate-600">
+                          {quickTipo === "in" ? "Recibí" : "Retiré"}
+                        </span>
+                        <input
+                          type="number"
+                          min={1}
+                          inputMode="numeric"
+                          autoFocus
+                          value={quickCantidad || ""}
+                          onChange={(e) => setQuickCantidad(Number(e.target.value) || 0)}
+                          className="w-20 border rounded-lg px-2 py-1.5 text-sm"
+                        />
+                        <span className="text-xs text-slate-500">
+                          → quedará {Math.max(
+                            0,
+                            (p.stockActual || 0) +
+                              (quickTipo === "in" ? quickCantidad : -quickCantidad)
+                          )} u.
+                        </span>
+                        <button
+                          onClick={() => confirmarQuick(p)}
+                          disabled={busyQuick}
+                          className={`ml-auto flex items-center gap-1 text-white text-xs font-semibold rounded-lg px-3 py-1.5 disabled:opacity-50 ${
+                            quickTipo === "in"
+                              ? "bg-emerald-600 hover:bg-emerald-700"
+                              : "bg-amber-600 hover:bg-amber-700"
+                          }`}
+                        >
+                          {busyQuick ? (
+                            <Loader2 size={14} className="animate-spin" />
+                          ) : (
+                            <Check size={14} />
+                          )}
+                          Confirmar
+                        </button>
+                        <button
+                          onClick={() => setQuickCodigo(null)}
+                          disabled={busyQuick}
+                          className="border border-slate-300 text-slate-600 hover:bg-slate-100 rounded-lg px-2 py-1.5 text-xs disabled:opacity-50"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    )}
+                    {enQuick && quickErr && (
+                      <p className="mt-1 text-xs text-red-600">{quickErr}</p>
+                    )}
                   </li>
                 );
               })}
