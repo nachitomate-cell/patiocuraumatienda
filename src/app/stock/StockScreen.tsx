@@ -35,8 +35,9 @@ import { useAtajos } from "@/lib/useAtajos";
 import { Modal } from "@/components/Modal";
 import { useNegocio } from "@/lib/negocio-context";
 import { useVendedor } from "@/lib/vendedor";
+import { estadoVence } from "@/lib/vence";
 
-type Filtro = "todos" | "con" | "bajo" | "sin";
+type Filtro = "todos" | "con" | "bajo" | "sin" | "vencido" | "vence7" | "vence30";
 
 export function StockScreen() {
   const NEGOCIO = useNegocio();
@@ -111,11 +112,15 @@ export function StockScreen() {
     const t = term.trim().toLowerCase();
     return productos.filter((p) => {
       const s = p.stockActual || 0;
+      const ev = estadoVence(p.vence);
       const okFiltro =
         filtro === "todos" ||
         (filtro === "con" && s > 0) ||
         (filtro === "bajo" && s > 0 && s <= umbral) ||
-        (filtro === "sin" && s <= 0);
+        (filtro === "sin" && s <= 0) ||
+        (filtro === "vencido" && ev?.nivel === "vencido") ||
+        (filtro === "vence7" && !!ev && ev.diasRestantes >= 0 && ev.diasRestantes <= 7) ||
+        (filtro === "vence30" && !!ev && ev.diasRestantes >= 0 && ev.diasRestantes <= 30);
       if (!okFiltro) return false;
       if (!t) return true;
       return (
@@ -187,6 +192,7 @@ export function StockScreen() {
       Stock: p.stockActual,
       Costo: p.costo,
       Precio: p.precio,
+      Vence: p.vence || "",
       "Importe inventario": Math.max(p.stockActual || 0, 0) * (p.costo || 0),
     }));
     const ws = XLSX.utils.json_to_sheet(filas);
@@ -207,6 +213,9 @@ export function StockScreen() {
     { id: "con", label: "Con stock" },
     { id: "bajo", label: "Stock bajo" },
     { id: "sin", label: "Sin stock" },
+    { id: "vencido", label: "Vencidos" },
+    { id: "vence7", label: "Vence ≤7 días" },
+    { id: "vence30", label: "Vence ≤30 días" },
   ];
 
   return (
@@ -344,6 +353,7 @@ export function StockScreen() {
             {visibles.map((p) => {
               const s = p.stockActual || 0;
               const editar = editando === p.codigo;
+              const ev = estadoVence(p.vence);
               return (
                 <tr key={p.codigo} className="border-t">
                   <td className="px-3 py-2 font-mono">
@@ -357,7 +367,14 @@ export function StockScreen() {
                       p.codigo
                     )}
                   </td>
-                  <td className="px-3 py-2">{p.descripcion}</td>
+                  <td className="px-3 py-2">
+                    <div>{p.descripcion}</div>
+                    {ev && (
+                      <span className={`inline-block mt-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${ev.bgText}`}>
+                        {ev.label}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-500">
                     {editar ? (
                       <input

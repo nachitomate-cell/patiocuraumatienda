@@ -712,18 +712,19 @@ export async function getEmprendedorPorToken(
 // origen distingue si lo cargó el propio emprendedor (/alta) o un admin (POS).
 export async function agregarProductoEmprendedor(
   emp: Emprendedor,
-  datos: { descripcion: string; precio: number; costo?: number; stock?: number },
+  datos: { descripcion: string; precio: number; costo?: number; stock?: number; vence?: string },
   origen: "emprendedor" | "admin" = "emprendedor",
   quien = ""
 ): Promise<string> {
   const db = getDb();
   const empRef = tdoc(EMPRENDEDORES, emp.id);
+  const vence = (datos.vence || "").trim();
   const codigo = await runTransaction(db, async (tx) => {
     const s = await tx.get(empRef);
     const n = (s.exists() ? (s.data().productosCount as number) || 0 : 0) + 1;
     const cod = `${emp.prefijo}-${String(n).padStart(4, "0")}`;
     tx.update(empRef, { productosCount: n });
-    tx.set(tdoc(PRODUCTOS, cod), {
+    const docProd: Record<string, unknown> = {
       codigo: cod,
       descripcion: datos.descripcion.trim(),
       precio: datos.precio,
@@ -732,7 +733,9 @@ export async function agregarProductoEmprendedor(
       emprendedorId: emp.id,
       emprendedorNombre: emp.nombre,
       creadoEn: Date.now(),
-    });
+    };
+    if (vence) docProd.vence = vence;
+    tx.set(tdoc(PRODUCTOS, cod), docProd);
     return cod;
   });
   invalidarCatalogo(); // producto nuevo en el catálogo
@@ -743,7 +746,9 @@ export async function agregarProductoEmprendedor(
     accion: "producto_agregado",
     codigo,
     descripcion: datos.descripcion.trim(),
-    despues: `precio ${datos.precio} · stock ${datos.stock ?? 0}`,
+    despues:
+      `precio ${datos.precio} · stock ${datos.stock ?? 0}` +
+      (vence ? ` · vence ${vence}` : ""),
   });
   return codigo;
 }
@@ -790,7 +795,7 @@ export async function productosDeEmprendedor(
 export async function actualizarProductoEmprendedor(
   empId: string,
   codigo: string,
-  cambios: { precio?: number; stockActual?: number; descripcion?: string },
+  cambios: { precio?: number; stockActual?: number; descripcion?: string; vence?: string },
   origen: "emprendedor" | "admin" = "emprendedor",
   quien = ""
 ): Promise<void> {
@@ -814,6 +819,11 @@ export async function actualizarProductoEmprendedor(
   }
   if (cambios.stockActual !== undefined) {
     limpio.stockActual = Math.max(0, Math.round(cambios.stockActual || 0));
+  }
+  if (cambios.vence !== undefined) {
+    // String vacío => limpiar el campo (se persiste como "" y la UI lo trata
+    // como "sin vence"). No usamos deleteField para no complicar el merge.
+    limpio.vence = (cambios.vence || "").trim();
   }
   if (Object.keys(limpio).length === 0) return;
   await setDoc(ref, limpio, { merge: true });
@@ -850,6 +860,16 @@ export async function actualizarProductoEmprendedor(
       descripcion: (limpio.descripcion as string) ?? p.descripcion,
       antes: String(p.stockActual ?? 0),
       despues: String(limpio.stockActual),
+    });
+  }
+  if ("vence" in limpio && (limpio.vence as string) !== (p.vence ?? "")) {
+    await registrarMovEmp(empId, {
+      en: ahora, por, origen,
+      accion: "vencimiento_cambiado",
+      codigo: cod,
+      descripcion: (limpio.descripcion as string) ?? p.descripcion,
+      antes: String(p.vence ?? ""),
+      despues: String(limpio.vence),
     });
   }
 }

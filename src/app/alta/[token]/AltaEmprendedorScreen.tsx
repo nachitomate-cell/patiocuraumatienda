@@ -34,6 +34,8 @@ import { money, hoyISO } from "@/lib/format";
 import { useNegocio } from "@/lib/negocio-context";
 import { useAuth } from "@/lib/auth";
 import { HistorialMovs } from "@/components/HistorialMovs";
+import { SelectorFecha } from "@/components/SelectorFecha";
+import { estadoVence } from "@/lib/vence";
 
 export function AltaEmprendedorScreen({ token }: { token: string }) {
   const { user, loading } = useAuth();
@@ -51,6 +53,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [descripcion, setDescripcion] = useState("");
   const [precio, setPrecio] = useState(0);
   const [stock, setStock] = useState(1);
+  const [vence, setVence] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -59,6 +62,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [edDescripcion, setEdDescripcion] = useState("");
   const [edPrecio, setEdPrecio] = useState(0);
   const [edStock, setEdStock] = useState(0);
+  const [edVence, setEdVence] = useState("");
   const [busyEdit, setBusyEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
 
@@ -179,7 +183,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     try {
       const cod = await agregarProductoEmprendedor(
         emp,
-        { descripcion, precio, stock },
+        { descripcion, precio, stock, vence },
         "emprendedor",
         emp.nombre
       );
@@ -194,6 +198,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             costo: 0,
             emprendedorId: emp.id,
             emprendedorNombre: emp.nombre,
+            ...(vence ? { vence } : {}),
           } as Producto,
           ...prev,
         ].sort((a, b) => a.codigo.localeCompare(b.codigo))
@@ -201,6 +206,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setDescripcion("");
       setPrecio(0);
       setStock(1);
+      setVence("");
       refrescarHistorial(emp.id);
     } catch {
       setMsg("No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.");
@@ -215,6 +221,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setEdDescripcion(p.descripcion || "");
     setEdPrecio(p.precio || 0);
     setEdStock(p.stockActual || 0);
+    setEdVence(p.vence || "");
     setEditErr("");
   }
 
@@ -230,6 +237,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           descripcion: edDescripcion,
           precio: edPrecio,
           stockActual: edStock,
+          vence: edVence,
         },
         "emprendedor",
         emp.nombre
@@ -242,6 +250,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 descripcion: edDescripcion.trim(),
                 precio: Math.max(0, Math.round(edPrecio || 0)),
                 stockActual: Math.max(0, Math.round(edStock || 0)),
+                vence: edVence.trim() || undefined,
               }
             : p
         )
@@ -256,23 +265,54 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   }
 
   // ===== Excel =====
-  function descargarReporte() {
+  // rango: "hoy" = solo ventas del día actual; "mes" = del mes en curso;
+  // "todo" = histórico cargado en memoria. Productos siempre se incluyen
+  // completos (filtrar el catálogo por ventas del rango no aporta).
+  function descargarReporte(rango: "hoy" | "mes" | "todo") {
     if (!emp) return;
     setDescargando(true);
     try {
+      const ahora = new Date();
+      const inicioHoy = new Date(
+        ahora.getFullYear(),
+        ahora.getMonth(),
+        ahora.getDate()
+      ).getTime();
+      const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).getTime();
+      const ventasRango = ventas.filter((v) => {
+        if (rango === "hoy") return v.creadoEn >= inicioHoy;
+        if (rango === "mes") return v.creadoEn >= inicioMes;
+        return true;
+      });
+
+      // Stats por código limitadas al rango: el catálogo muestra "unidades
+      // vendidas" e "ingresos generados" del mismo período del reporte.
+      const statsRango = new Map<string, { unidades: number; total: number }>();
+      for (const v of ventasRango) {
+        if (v.anulada) continue;
+        for (const l of v.items) {
+          const k = l.codigo || "(manual)";
+          const acc = statsRango.get(k) || { unidades: 0, total: 0 };
+          acc.unidades += l.cantidad;
+          acc.total += subtotalLinea(l);
+          statsRango.set(k, acc);
+        }
+      }
+
       const productosRows = productos.map((p) => {
-        const stats = ventasPorCodigo.get(p.codigo) || { unidades: 0, total: 0 };
+        const stats = statsRango.get(p.codigo) || { unidades: 0, total: 0 };
         return {
           Codigo: p.codigo,
           Descripcion: p.descripcion,
           "Precio actual": p.precio,
           "Stock actual": p.stockActual,
+          Vence: p.vence || "",
           "Unidades vendidas": stats.unidades,
           "Ingresos generados": stats.total,
         };
       });
 
-      const ventasRows = ventas.flatMap((v) =>
+      const ventasRows = ventasRango.flatMap((v) =>
         v.items.map((l) => ({
           "Nro venta": v.nro,
           Fecha: v.fecha,
@@ -290,18 +330,38 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         }))
       );
 
+      // Totales recalculados sobre el rango (no usa `totales` global, que
+      // representa el histórico completo).
+      let unidadesR = 0;
+      let totalR = 0;
+      let nVentasR = 0;
+      for (const v of ventasRango) {
+        if (v.anulada) continue;
+        nVentasR++;
+        for (const l of v.items) {
+          unidadesR += l.cantidad;
+          totalR += subtotalLinea(l);
+        }
+      }
+
+      const periodo =
+        rango === "hoy"
+          ? hoyISO()
+          : rango === "mes"
+          ? `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, "0")}`
+          : "histórico";
+
       const resumenRows = [
         {
           Emprendedor: emp.nombre,
           Negocio: NEGOCIO.nombre || NEGOCIO.slug,
           Generado: new Date().toLocaleString("es-CL"),
+          Período: periodo,
           "Productos (catálogo)": productos.length,
           "Stock total (unidades)": totales.stockTotal,
-          "Ventas (N°, no anuladas)": totales.nVentas,
-          "Unidades vendidas": totales.unidades,
-          "Ingreso hoy": totales.ingresoHoy,
-          "Ingreso del mes": totales.ingresoMes,
-          "Total ingresado": totales.totalVendido,
+          "Ventas en el período (no anuladas)": nVentasR,
+          "Unidades vendidas en el período": unidadesR,
+          "Total ingresado en el período": totalR,
         },
       ];
 
@@ -328,7 +388,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         .replace(/[̀-ͯ]/g, "")
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
-      XLSX.writeFile(wb, `reporte_${slugEmp}_${hoyISO()}.xlsx`);
+      XLSX.writeFile(wb, `reporte_${slugEmp}_${rango}_${periodo}.xlsx`);
     } finally {
       setDescargando(false);
     }
@@ -387,7 +447,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 Gestiona tu catálogo, revisa tus ventas y descarga tu reporte.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => emp && cargarDatos(emp)}
                 disabled={cargandoDatos}
@@ -397,12 +457,22 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 <RefreshCw size={14} className={cargandoDatos ? "animate-spin" : ""} />
               </button>
               <button
-                onClick={descargarReporte}
+                onClick={() => descargarReporte("hoy")}
                 disabled={descargando || cargandoDatos}
+                title="Excel con las ventas de hoy"
                 className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-3 py-2 text-sm disabled:opacity-50"
               >
                 {descargando ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                Descargar Excel
+                Excel diario
+              </button>
+              <button
+                onClick={() => descargarReporte("mes")}
+                disabled={descargando || cargandoDatos}
+                title="Excel con las ventas del mes en curso"
+                className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              >
+                {descargando ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                Excel mensual
               </button>
             </div>
           </div>
@@ -470,6 +540,17 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 />
               </label>
             </div>
+            <label className="block text-sm">
+              <span className="text-slate-600 font-medium">
+                Vencimiento <span className="text-slate-400 font-normal">(opcional)</span>
+              </span>
+              <SelectorFecha
+                value={vence}
+                onChange={setVence}
+                placeholder="Sin vencimiento"
+                className="mt-1"
+              />
+            </label>
             <button
               onClick={agregar}
               disabled={busy}
@@ -534,6 +615,15 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                           />
                         </label>
                       </div>
+                      <label className="block text-xs mt-2">
+                        <span className="text-slate-500">Vencimiento (opcional)</span>
+                        <SelectorFecha
+                          value={edVence}
+                          onChange={setEdVence}
+                          placeholder="Sin vencimiento"
+                          className="mt-1"
+                        />
+                      </label>
                       {editErr && (
                         <p className="mt-2 text-xs text-red-600">{editErr}</p>
                       )}
@@ -561,6 +651,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                     </li>
                   );
                 }
+                const ev = estadoVence(p.vence);
                 return (
                   <li
                     key={p.codigo}
@@ -570,13 +661,18 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                       <div className="font-medium text-slate-800 truncate">
                         {p.descripcion}
                       </div>
-                      <div className="text-xs text-slate-500 flex flex-wrap gap-x-2">
+                      <div className="text-xs text-slate-500 flex flex-wrap gap-x-2 items-center">
                         <span className="font-mono">{p.codigo}</span>
                         <span>· {p.stockActual} u.</span>
                         <span>· {money(p.precio)}</span>
                         {stats.unidades > 0 && (
                           <span className="text-emerald-700">
                             · vendidas {stats.unidades}
+                          </span>
+                        )}
+                        {ev && (
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${ev.bgText}`}>
+                            {ev.label}
                           </span>
                         )}
                       </div>

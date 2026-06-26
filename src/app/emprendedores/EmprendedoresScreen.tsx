@@ -188,7 +188,17 @@ export function EmprendedoresScreen() {
   }, [lista]);
 
   function linkDe(e: Emprendedor) {
-    return `${origin}/alta/${e.token}`;
+    if (!origin) return "";
+    // En prod el tenant lo decide el subdominio. En localhost / IP de red local
+    // hay que pasarlo explícito como query, si no /alta cae al fallback dev.
+    const host = new URL(origin).hostname.toLowerCase();
+    const esLocal =
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      /^\d+\.\d+\.\d+\.\d+$/.test(host);
+    const sufijo =
+      esLocal && NEGOCIO.slug ? `?negocio=${encodeURIComponent(NEGOCIO.slug)}` : "";
+    return `${origin}/alta/${e.token}${sufijo}`;
   }
 
   async function copiar(e: Emprendedor) {

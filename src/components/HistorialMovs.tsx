@@ -1,6 +1,6 @@
 "use client";
 
-import { History, Plus, Pencil, Tag, Boxes, FileText, Hash, Power, PauseCircle, UserPlus, Barcode, DollarSign } from "lucide-react";
+import { History, Plus, Pencil, Tag, Boxes, FileText, Hash, Power, PauseCircle, UserPlus, Barcode, DollarSign, CalendarClock } from "lucide-react";
 import type { AccionMovEmprendedor, MovimientoEmprendedor } from "@/lib/types";
 import { money } from "@/lib/format";
 
@@ -16,6 +16,7 @@ const PRESENT: Record<
   barcode_cambiado: { Icon: Barcode, color: "bg-slate-100 text-slate-700", label: "Código de barras" },
   codigo_renombrado: { Icon: Hash, color: "bg-violet-100 text-violet-700", label: "Código" },
   costo_cambiado: { Icon: DollarSign, color: "bg-slate-100 text-slate-700", label: "Costo" },
+  vencimiento_cambiado: { Icon: CalendarClock, color: "bg-rose-100 text-rose-700", label: "Vencimiento" },
   emprendedor_creado: { Icon: UserPlus, color: "bg-emerald-100 text-emerald-700", label: "Emprendedor creado" },
   emprendedor_editado: { Icon: Pencil, color: "bg-slate-100 text-slate-700", label: "Datos" },
   emprendedor_activado: { Icon: Power, color: "bg-emerald-100 text-emerald-700", label: "Reactivado" },

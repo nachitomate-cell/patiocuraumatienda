@@ -24,6 +24,7 @@ const ACCION_LABEL: Record<AccionMovEmprendedor, string> = {
   barcode_cambiado: "Cambios de código de barras",
   codigo_renombrado: "Códigos renombrados",
   costo_cambiado: "Cambios de costo",
+  vencimiento_cambiado: "Cambios de vencimiento",
   emprendedor_creado: "Emprendedor creado",
   emprendedor_editado: "Datos editados",
   emprendedor_activado: "Reactivado",

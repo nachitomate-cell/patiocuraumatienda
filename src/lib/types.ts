@@ -6,6 +6,9 @@ export interface Producto {
   costo: number;
   precio: number;
   barcode?: string; // código de barras EAN/UPC (opcional)
+  // Fecha de vencimiento ISO yyyy-mm-dd. Opcional: solo aplica a productos
+  // perecibles (alimentos, fármacos). Patio Curauma típicamente no la usa.
+  vence?: string;
   emprendedorId?: string;
   emprendedorNombre?: string;
 }
@@ -105,6 +108,7 @@ export type AccionMovEmprendedor =
   | "barcode_cambiado"
   | "codigo_renombrado"
   | "costo_cambiado"
+  | "vencimiento_cambiado"
   | "emprendedor_creado"
   | "emprendedor_editado"
   | "emprendedor_activado"

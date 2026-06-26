@@ -421,7 +421,7 @@ function EditarNegocioModal({
           <input
             value={logo}
             onChange={(e) => setLogo(e.target.value)}
-            placeholder="/logos/vidasana.png"
+            placeholder="/logos/mi-negocio.png"
             className={inputCls}
           />
         </Campo>
@@ -429,7 +429,7 @@ function EditarNegocioModal({
           <input
             value={fondoLogin}
             onChange={(e) => setFondoLogin(e.target.value)}
-            placeholder="/logos/vidasana.png"
+            placeholder="/logos/mi-negocio.png"
             className={inputCls}
           />
         </Campo>
