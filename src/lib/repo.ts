@@ -1119,6 +1119,21 @@ export async function registrarRetiro(cajaId: string, retiro: Retiro): Promise<v
   });
 }
 
+// Inyecta efectivo extra a la caja (espejo del retiro). Pensado para casos
+// fuera de venta: el dueño deja plata para vueltos, fondo extra, etc.
+export async function registrarIngreso(cajaId: string, ingreso: Retiro): Promise<void> {
+  const db = getDb();
+  const ref = tdoc(CAJAS, cajaId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("La caja no existe.");
+    const c = snap.data() as Caja;
+    if (c.cerradaEn) throw new Error("La caja ya está cerrada.");
+    const ingresos = [...(c.ingresos ?? []), ingreso];
+    tx.update(ref, { ingresos });
+  });
+}
+
 // Cierra la caja: guarda lo contado, calcula la diferencia y la archiva.
 export async function cerrarCaja(
   cajaId: string,

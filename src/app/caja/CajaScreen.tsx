@@ -24,6 +24,7 @@ import {
   cajaAbierta,
   cerrarCaja,
   registrarRetiro,
+  registrarIngreso,
   ultimasCajas,
   ventasEnRango,
 } from "@/lib/repo";
@@ -60,6 +61,7 @@ export function CajaScreen() {
   // Modales
   const [abrirModal, setAbrirModal] = useState(false);
   const [retiroModal, setRetiroModal] = useState(false);
+  const [ingresoModal, setIngresoModal] = useState(false);
   const [cerrarModal, setCerrarModal] = useState(false);
   const [historialAbierto, setHistorialAbierto] = useState(false);
 
@@ -102,10 +104,11 @@ export function CajaScreen() {
       }
     }
     const totalRetiros = (caja?.retiros ?? []).reduce((s, r) => s + r.monto, 0);
+    const totalIngresos = (caja?.ingresos ?? []).reduce((s, i) => s + i.monto, 0);
     const totalDevoluciones = (caja?.devoluciones ?? []).reduce((s, d) => s + d.monto, 0);
     const efectivoEsperado =
-      (caja?.fondoInicial ?? 0) + porMedio.efectivo - totalRetiros - totalDevoluciones;
-    return { porMedio, totalVentas, nVentas, totalRetiros, totalDevoluciones, efectivoEsperado };
+      (caja?.fondoInicial ?? 0) + porMedio.efectivo + totalIngresos - totalRetiros - totalDevoluciones;
+    return { porMedio, totalVentas, nVentas, totalRetiros, totalIngresos, totalDevoluciones, efectivoEsperado };
   }, [ventas, caja]);
 
   return (
@@ -156,9 +159,11 @@ export function CajaScreen() {
             umbral={caja.umbralRetiro}
             fondo={caja.fondoInicial}
             ingresosEf={m.porMedio.efectivo}
+            ingresosExtra={m.totalIngresos}
             salidas={m.totalRetiros}
             devoluciones={m.totalDevoluciones}
             onRetiro={() => setRetiroModal(true)}
+            onIngreso={() => setIngresoModal(true)}
             onCerrar={() => setCerrarModal(true)}
             onRefresh={cargar}
           />
@@ -216,6 +221,37 @@ export function CajaScreen() {
               </ul>
             )}
           </div>
+
+          {/* Ingresos del turno (inyecciones de efectivo fuera de venta) */}
+          {caja.ingresos && caja.ingresos.length > 0 && (
+            <div className="bg-white rounded-xl shadow p-4 anim-in">
+              <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+                  <Plus size={18} className="text-emerald-600" /> Ingresos del turno (
+                  {caja.ingresos.length})
+                </h2>
+                <button
+                  onClick={() => setIngresoModal(true)}
+                  className="text-sm font-semibold text-cyan-700 hover:text-cyan-800 flex items-center gap-1"
+                >
+                  <Plus size={14} /> Registrar ingreso
+                </button>
+              </div>
+              <ul className="divide-y divide-slate-100 text-sm">
+                {caja.ingresos.map((i, idx) => (
+                  <li key={idx} className="py-2 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-semibold text-emerald-700">+{money(i.monto)}</div>
+                      <div className="text-xs text-slate-500 truncate">
+                        {fmtHora(i.hora)} · {i.motivo || "sin motivo"} ·{" "}
+                        {i.vendedor || "sin vendedor"}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Devoluciones del turno (egresos por reverso de ventas en efectivo) */}
           {caja.devoluciones && caja.devoluciones.length > 0 && (
@@ -316,6 +352,32 @@ export function CajaScreen() {
         }}
       />
 
+      <ModalIngreso
+        abierto={ingresoModal}
+        saldoEfectivo={m.efectivoEsperado}
+        vendedor={vendedor}
+        busy={busy}
+        onCerrar={() => setIngresoModal(false)}
+        onConfirmar={async (monto, motivo) => {
+          if (!caja) return;
+          setBusy(true);
+          try {
+            await registrarIngreso(caja.id, {
+              monto,
+              motivo,
+              hora: Date.now(),
+              vendedor,
+            });
+            setIngresoModal(false);
+            await cargar();
+          } catch (e) {
+            setError((e as Error).message);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+
       <ModalCerrarCaja
         abierto={cerrarModal}
         esperado={m.efectivoEsperado}
@@ -343,15 +405,17 @@ export function CajaScreen() {
 // ===== Sub-componentes =====
 
 function SaldoEfectivo({
-  esperado, umbral, fondo, ingresosEf, salidas, devoluciones, onRetiro, onCerrar, onRefresh,
+  esperado, umbral, fondo, ingresosEf, ingresosExtra, salidas, devoluciones, onRetiro, onIngreso, onCerrar, onRefresh,
 }: {
   esperado: number;
   umbral: number;
   fondo: number;
   ingresosEf: number;
+  ingresosExtra: number;
   salidas: number;
   devoluciones: number;
   onRetiro: () => void;
+  onIngreso: () => void;
   onCerrar: () => void;
   onRefresh: () => void;
 }) {
@@ -383,11 +447,23 @@ function SaldoEfectivo({
           <div className={`mt-2 text-xs ${
             superaUmbral ? "text-amber-700" : "text-emerald-100"
           }`}>
-            {money(fondo)} fondo + {money(ingresosEf)} ventas efectivo − {money(salidas)} retiros
+            {money(fondo)} fondo + {money(ingresosEf)} ventas efectivo
+            {ingresosExtra > 0 && ` + ${money(ingresosExtra)} ingresos`}
+            {" − "}{money(salidas)} retiros
             {devoluciones > 0 && ` − ${money(devoluciones)} devoluciones`}
           </div>
         </div>
         <div className="flex flex-col gap-2 shrink-0">
+          <button
+            onClick={onIngreso}
+            className={`btn-accion font-semibold rounded-lg px-4 py-2 flex items-center gap-2 ${
+              superaUmbral
+                ? "bg-slate-700 hover:bg-slate-800 text-white"
+                : "bg-emerald-900 hover:bg-emerald-950 text-white"
+            }`}
+          >
+            <Plus size={16} /> Ingreso
+          </button>
           <button
             onClick={onRetiro}
             className={`btn-accion font-semibold rounded-lg px-4 py-2 flex items-center gap-2 ${
@@ -624,6 +700,65 @@ function ModalRetiro({
         >
           {busy ? <Loader2 size={18} className="animate-spin" /> : <Minus size={18} />}
           Registrar retiro
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function ModalIngreso({
+  abierto, saldoEfectivo, vendedor, busy, onCerrar, onConfirmar,
+}: {
+  abierto: boolean; saldoEfectivo: number; vendedor: string; busy: boolean;
+  onCerrar: () => void;
+  onConfirmar: (monto: number, motivo: string) => Promise<void>;
+}) {
+  const [monto, setMonto] = useState(0);
+  const [motivo, setMotivo] = useState("");
+
+  useEffect(() => {
+    if (abierto) { setMonto(0); setMotivo(""); }
+  }, [abierto]);
+
+  const motivoOk = motivo.trim().length > 0;
+  return (
+    <Modal abierto={abierto} onCerrar={onCerrar} titulo="Registrar ingreso de efectivo" maxW="max-w-md">
+      <div className="space-y-3">
+        <p className="text-sm text-slate-500">
+          Efectivo en caja: <strong className="text-slate-800">{money(saldoEfectivo)}</strong>
+        </p>
+        <p className="text-xs text-slate-500 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+          Úsalo para inyecciones de plata fuera de venta (fondo extra del dueño, vueltos, etc.).
+          El movimiento queda registrado con tu nombre y la hora.
+        </p>
+        <Campo label="Monto a ingresar">
+          <input
+            type="number" min={0} inputMode="numeric" autoFocus
+            value={monto || ""}
+            onChange={(e) => setMonto(Math.max(0, Number(e.target.value) || 0))}
+            placeholder="0"
+            className="w-full border-2 rounded-xl px-4 py-2.5 text-lg"
+          />
+        </Campo>
+        <Campo label="Motivo (obligatorio)">
+          <input
+            type="text"
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Ej: fondo extra del dueño, vueltos…"
+            className="w-full border rounded-lg px-3 py-2"
+          />
+        </Campo>
+        <p className="text-xs text-slate-500">
+          Ingresa: <strong>{vendedor || "Sin vendedor"}</strong>
+        </p>
+        <button
+          onClick={() => onConfirmar(monto, motivo.trim())}
+          disabled={busy || monto <= 0 || !motivoOk}
+          className="btn-accion w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg py-2.5 disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {busy ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+          Registrar ingreso
         </button>
       </div>
     </Modal>

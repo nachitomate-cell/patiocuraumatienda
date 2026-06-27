@@ -174,8 +174,9 @@ export function VentaScreen() {
       .filter((v) => v.medioPago === "efectivo")
       .reduce((s, v) => s + v.total, 0);
     const totalRetiros = (caja.retiros ?? []).reduce((s, r) => s + r.monto, 0);
+    const totalIngresos = (caja.ingresos ?? []).reduce((s, i) => s + i.monto, 0);
     const totalDev = (caja.devoluciones ?? []).reduce((s, d) => s + d.monto, 0);
-    const ahora = caja.fondoInicial + ingresoEf - totalRetiros - totalDev;
+    const ahora = caja.fondoInicial + ingresoEf + totalIngresos - totalRetiros - totalDev;
     const antes = ahora - montoVenta;
     const supera = ahora > caja.umbralRetiro;
     setAlertaCaja((prev) => {

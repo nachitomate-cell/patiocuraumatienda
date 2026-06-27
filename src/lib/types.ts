@@ -184,6 +184,9 @@ export interface Caja {
   fondoInicial: number; // efectivo con que se abre la caja
   umbralRetiro: number; // sobre este saldo de efectivo el POS sugiere retirar
   retiros: Retiro[];
+  // Ingresos de efectivo del turno fuera de venta (inyecciones de plata para
+  // vueltos, fondo extra del dueño, etc.). Motivo obligatorio para auditoría.
+  ingresos?: Retiro[];
   // Devoluciones en efectivo del turno (egreso de caja). Solo se llenan cuando
   // el medio original de la venta era "efectivo".
   devoluciones?: DevolucionCaja[];
