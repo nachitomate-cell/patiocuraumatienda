@@ -35,6 +35,7 @@ import {
   cajaAbierta,
   ventasEnRango,
   abrirCaja,
+  escucharCajaAbierta,
 } from "@/lib/repo";
 import {
   subtotalLinea,
@@ -124,24 +125,24 @@ export function VentaScreen() {
   }, []);
 
   // Al cargar la pantalla, evalúa el estado actual de la caja para mostrar la
-  // alarma si el efectivo ya viene sobre el umbral de un turno anterior, y
-  // carga la caja activa para el banner de apertura.
+  // alarma si el efectivo ya viene sobre el umbral de un turno anterior, y se
+  // suscribe en vivo a la caja activa para que aperturas/cierres hechos en
+  // otro PC se reflejen al instante en este equipo.
   useEffect(() => {
     evaluarCaja().catch(() => {});
-    refrescarCajaActiva().catch(() => {});
+    const unsub = escucharCajaAbierta((c) => {
+      setCajaActiva(c);
+      // Si otro PC abrió/cerró caja, recalculamos por si cambia el saldo o
+      // el umbral relevante para la alarma.
+      evaluarCaja().catch(() => {});
+    });
+    return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function refrescarCajaActiva() {
-    try {
-      setCajaActiva(await cajaAbierta());
-    } catch {
-      setCajaActiva(null);
-    }
-  }
-
   // Abre la caja del turno con el vendedor del header. No pedimos el nombre:
-  // viene del chip de vendedor del header (useVendedor).
+  // viene del chip de vendedor del header (useVendedor). El listener en vivo
+  // se encarga de propagar la apertura al estado local sin refetch.
   async function confirmarAbrirCaja() {
     if (abriendoCaja) return;
     setErrorCaja("");
@@ -149,7 +150,6 @@ export function VentaScreen() {
     try {
       await abrirCaja(fondoApertura, umbralApertura, vendedor);
       setAbrirCajaModal(false);
-      await refrescarCajaActiva();
       setMsg(`Caja abierta por ${vendedor || "sin vendedor"}.`);
     } catch (e) {
       setErrorCaja((e as Error).message || "No se pudo abrir la caja.");

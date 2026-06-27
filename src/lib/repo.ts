@@ -14,6 +14,7 @@ import {
   runTransaction,
   increment,
   documentId,
+  onSnapshot,
 } from "firebase/firestore";
 import { getDb } from "./firebase";
 import { getNegocioId, onCambioNegocio } from "./tenant";
@@ -1057,6 +1058,28 @@ export async function cajaAbierta(): Promise<Caja | null> {
   if (snap.empty) return null;
   const d = snap.docs[0];
   return { id: d.id, ...(d.data() as Omit<Caja, "id">) };
+}
+
+// Se suscribe en vivo a la caja abierta del negocio. cb recibe la caja actual
+// (o null si no hay ninguna). Devuelve un unsubscribe que detiene el listener.
+// Sirve para que aperturas/cierres hechos en otro PC se vean al instante en
+// todas las pantallas conectadas.
+export function escucharCajaAbierta(cb: (c: Caja | null) => void): () => void {
+  const q = query(
+    tcol(CAJAS),
+    where("cerradaEn", "==", null),
+    orderBy("aperturaEn", "desc"),
+    limit(1)
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      if (snap.empty) return cb(null);
+      const d = snap.docs[0];
+      cb({ id: d.id, ...(d.data() as Omit<Caja, "id">) });
+    },
+    () => cb(null)
+  );
 }
 
 // Abre una caja nueva. Falla si ya hay una abierta.
