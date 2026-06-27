@@ -7,8 +7,6 @@ import {
   Plus,
   X,
   Check,
-  Printer,
-  RotateCcw,
   Eye,
   EyeOff,
   AlertTriangle,
@@ -20,6 +18,8 @@ import {
   ArrowLeftRight,
   Notebook,
   UserPlus,
+  Minimize2,
+  Maximize2,
 } from "lucide-react";
 import {
   buscarParaVenta,
@@ -28,7 +28,8 @@ import {
   listarClientes,
   crearCliente,
   todosLosProductos,
-  actualizarCodigoBoleta,
+  cajaAbierta,
+  ventasEnRango,
 } from "@/lib/repo";
 import {
   subtotalLinea,
@@ -75,13 +76,17 @@ export function VentaScreen() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [clienteId, setClienteId] = useState("");
   const [nuevoCliente, setNuevoCliente] = useState("");
-  // Folio externo de boleta. Se puede ingresar antes de confirmar (entra junto
-  // a la venta) o después (se persiste sobre la venta ya creada con un botón).
+  // Folio externo de boleta. Se pide en un panel ANTES de registrar la venta,
+  // así entra en la misma escritura a Firestore.
   const [codigoBoleta, setCodigoBoleta] = useState("");
-  // Lo último persistido: si difiere del input visible, mostramos botón Guardar.
-  const [codigoBoletaGuardado, setCodigoBoletaGuardado] = useState("");
-  const [guardandoCod, setGuardandoCod] = useState(false);
+  const [pidiendoCod, setPidiendoCod] = useState(false);
+  // Alerta de exceso de efectivo en caja. Se setea cuando una venta cruza el
+  // umbralRetiro definido al abrir la caja (default $200.000). Persiste en
+  // pantalla hasta que el cajero la descarte.
+  const [alertaCaja, setAlertaCaja] = useState<{ saldo: number; umbral: number } | null>(null);
+  const [alertaMinimizada, setAlertaMinimizada] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const codInputRef = useRef<HTMLInputElement>(null);
 
   const total = items.reduce((s, l) => s + subtotalLinea(l), 0);
 
@@ -90,6 +95,73 @@ export function VentaScreen() {
       .then(setClientes)
       .catch(() => {});
   }, []);
+
+  // Pedir permiso de notificaciones del sistema al entrar a la pantalla.
+  // Si el navegador no lo soporta o el usuario lo niega, igual mostramos el
+  // banner en pantalla, así nunca se pierde la alerta.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
+  // Al cargar la pantalla, evalúa el estado actual de la caja para mostrar la
+  // alarma si el efectivo ya viene sobre el umbral de un turno anterior.
+  useEffect(() => {
+    evaluarCaja().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Calcula el saldo actual de la caja abierta y actualiza la alerta:
+  // - Si supera el umbral, mantiene el banner visible con el saldo al día.
+  // - Si bajó (por un retiro) o no hay caja, lo limpia.
+  // Retorna el saldo previo (sin contar montoVenta) para que el caller decida
+  // si dispara una notificación del sistema en el momento del cruce.
+  async function evaluarCaja(montoVenta = 0): Promise<{ antes: number; ahora: number; umbral: number } | null> {
+    const caja = await cajaAbierta();
+    if (!caja || !caja.umbralRetiro || caja.umbralRetiro <= 0) {
+      setAlertaCaja(null);
+      return null;
+    }
+    const vs = await ventasEnRango(caja.aperturaEn, Date.now());
+    const ingresoEf = vs
+      .filter((v) => v.medioPago === "efectivo")
+      .reduce((s, v) => s + v.total, 0);
+    const totalRetiros = (caja.retiros ?? []).reduce((s, r) => s + r.monto, 0);
+    const totalDev = (caja.devoluciones ?? []).reduce((s, d) => s + d.monto, 0);
+    const ahora = caja.fondoInicial + ingresoEf - totalRetiros - totalDev;
+    const antes = ahora - montoVenta;
+    const supera = ahora > caja.umbralRetiro;
+    setAlertaCaja((prev) => {
+      // Si pasamos de no-alerta a alerta, des-minimizamos para que se vea grande.
+      if (supera && !prev) setAlertaMinimizada(false);
+      return supera ? { saldo: ahora, umbral: caja.umbralRetiro } : null;
+    });
+    return { antes, ahora, umbral: caja.umbralRetiro };
+  }
+
+  // Después de una venta en efectivo: refresca el banner y, sólo si la venta
+  // cruzó el umbral en este momento, dispara la notificación del sistema.
+  async function chequearAlertaCaja(montoVenta: number) {
+    try {
+      const r = await evaluarCaja(montoVenta);
+      if (!r) return;
+      if (r.antes <= r.umbral && r.ahora > r.umbral) {
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          try {
+            new Notification("Saca efectivo de la caja", {
+              body: `Saldo ${money(r.ahora)} · supera el umbral de ${money(r.umbral)}.`,
+              tag: "alerta-caja-umbral",
+              requireInteraction: true,
+            });
+          } catch {}
+        }
+      }
+    } catch {
+      // Silencioso: si falla la consulta no rompemos el flujo de venta.
+    }
+  }
 
   // Carga el catálogo una vez (Firestore lo sirve luego desde su cache local).
   // La búsqueda por nombre se hace en memoria: instantánea y sin costo.
@@ -282,10 +354,23 @@ export function VentaScreen() {
     setItems((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...cambios } : l)));
   }
 
-  async function confirmar() {
+  // Valida y abre el panel de cierre. La venta NO se registra todavía: se
+  // espera a que el cajero ingrese el código de boleta para escribir todo
+  // junto en una sola operación.
+  function abrirCierre() {
+    if (busy || pidiendoCod) return;
     if (items.length === 0) return setMsg("No hay productos en el carrito.");
     if (medioPago === "fiado" && !clienteId)
       return setMsg("Seleccione o cree un cliente para fiar.");
+    setMsg("");
+    setPidiendoCod(true);
+    setTimeout(() => codInputRef.current?.focus(), 50);
+  }
+
+  // Registra la venta con el código de boleta ya ingresado, imprime y arranca
+  // una venta nueva. Una única escritura a Firestore por venta.
+  async function confirmarYImprimir() {
+    if (busy) return;
     setBusy(true);
     setMsg("");
     try {
@@ -308,37 +393,31 @@ export function VentaScreen() {
           : base
       );
       setNro(nuevoNro);
-      // Marcamos como guardado lo que se persistió con la venta para que el
-      // botón "Guardar código" no aparezca hasta que el usuario lo modifique.
-      setCodigoBoletaGuardado(codBoleta);
+      setPidiendoCod(false);
       setMsg(
         medioPago === "fiado"
           ? `Venta ${nuevoNro} fiada a ${cli?.nombre ?? "cliente"}.`
           : `Venta ${nuevoNro} registrada (${medioPago}).`
       );
+      // Si fue venta en efectivo, chequea si la caja cruzó el umbral. No
+      // bloquea la impresión: corre en paralelo.
+      if (medioPago === "efectivo") {
+        chequearAlertaCaja(total);
+      }
+      // Esperar a que React pinte la boleta con el nro nuevo, imprimir y, al
+      // cerrar el diálogo (impreso o cancelado), arrancar una venta nueva.
+      setTimeout(() => {
+        const onAfter = () => {
+          window.removeEventListener("afterprint", onAfter);
+          nuevaVenta();
+        };
+        window.addEventListener("afterprint", onAfter);
+        window.print();
+      }, 80);
     } catch {
       setMsg("Error al registrar la venta. Revise su conexión o reglas de Firestore.");
     } finally {
       setBusy(false);
-    }
-  }
-
-  // Asocia un código de boleta a la venta YA confirmada (cuando se ingresa
-  // después de finalizar). Persiste sobre el doc existente y sincroniza el
-  // baseline para que desaparezca el botón.
-  async function guardarCodigoBoleta() {
-    if (nro === "NV-—") return;
-    setGuardandoCod(true);
-    setMsg("");
-    try {
-      const cod = codigoBoleta.trim();
-      await actualizarCodigoBoleta(nro, cod);
-      setCodigoBoletaGuardado(cod);
-      setMsg(cod ? `Código de boleta guardado en ${nro}.` : `Código de boleta borrado de ${nro}.`);
-    } catch {
-      setMsg("No se pudo guardar el código de boleta.");
-    } finally {
-      setGuardandoCod(false);
     }
   }
 
@@ -354,7 +433,7 @@ export function VentaScreen() {
     setMedioPago("efectivo");
     setClienteId("");
     setCodigoBoleta("");
-    setCodigoBoletaGuardado("");
+    setPidiendoCod(false);
   }
 
   // Atajos de teclado de la pantalla de venta.
@@ -370,12 +449,52 @@ export function VentaScreen() {
     "alt+c": () => setMedioPago("credito"),
     "alt+t": () => setMedioPago("transferencia"),
     "alt+f": () => setMedioPago("fiado"),
-    "alt+g": () => confirmar(),
+    "alt+g": () => abrirCierre(),
     "alt+n": nuevaVenta,
   });
 
   return (
-    <div className="grid lg:grid-cols-3 gap-6">
+    <div className="space-y-4">
+      {alertaCaja && (
+        alertaMinimizada ? (
+          <button
+            onClick={() => setAlertaMinimizada(false)}
+            className="w-full rounded-xl border-2 border-red-500 bg-red-600 text-white px-4 py-2 flex items-center gap-3 shadow-md hover:bg-red-700 no-print"
+            title="Mostrar alarma"
+          >
+            <AlertTriangle size={20} className="shrink-0 animate-pulse" />
+            <span className="font-bold flex-1 text-left truncate">
+              Caja sobre umbral: {money(alertaCaja.saldo)} (límite {money(alertaCaja.umbral)})
+            </span>
+            <Maximize2 size={16} className="shrink-0 opacity-80" />
+          </button>
+        ) : (
+          <div className="relative rounded-2xl border-4 border-red-500 bg-gradient-to-r from-red-600 to-red-700 p-6 flex items-center gap-5 shadow-2xl animate-pulse no-print">
+            <button
+              onClick={() => setAlertaMinimizada(true)}
+              className="absolute top-2 right-2 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg p-1.5"
+              aria-label="Minimizar alarma"
+              title="Minimizar"
+            >
+              <Minimize2 size={18} />
+            </button>
+            <AlertTriangle size={64} className="text-white shrink-0 drop-shadow" />
+            <div className="flex-1 min-w-0">
+              <div className="font-extrabold text-white text-3xl sm:text-4xl leading-tight tracking-tight drop-shadow">
+                ¡SACA EFECTIVO DE LA CAJA!
+              </div>
+              <div className="text-white/95 text-lg sm:text-xl font-bold mt-2">
+                Saldo {money(alertaCaja.saldo)} · supera el umbral de {money(alertaCaja.umbral)}
+              </div>
+              <div className="text-white/80 text-sm mt-1">
+                Anda a <span className="font-mono">/caja</span> y registra un retiro para volver a un saldo seguro.
+              </div>
+            </div>
+          </div>
+        )
+      )}
+
+      <div className="grid lg:grid-cols-3 gap-6">
       {mostrarCamara && (
         <EscanerCamara
           onDetectar={(c) => agregarPorCodigo(c, 1, 0)}
@@ -890,61 +1009,17 @@ export function VentaScreen() {
             )}
           </div>
 
-          {/* Código de boleta (folio externo, opcional). Se puede ingresar
-              antes de confirmar para que entre con la venta, o después para
-              guardarlo sobre la venta ya creada. */}
-          <div className="mt-4">
-            <div className="text-xs uppercase tracking-wide text-slate-500 mb-2">
-              Código de boleta (opcional)
-            </div>
-            <div className="flex gap-2">
-              <input
-                value={codigoBoleta}
-                onChange={(e) => setCodigoBoleta(e.target.value)}
-                placeholder="Folio de la boleta"
-                className="flex-1 border border-slate-300 rounded-lg px-3 py-2 bg-white/95 text-slate-900 placeholder:text-slate-400"
-              />
-              {nro !== "NV-—" && codigoBoleta.trim() !== codigoBoletaGuardado.trim() && (
-                <button
-                  onClick={guardarCodigoBoleta}
-                  disabled={guardandoCod}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-3 py-2 text-sm flex items-center gap-1.5 shrink-0 disabled:opacity-50"
-                  title="Guardar el código en la venta ya confirmada"
-                >
-                  <Check size={16} /> {guardandoCod ? "…" : "Guardar"}
-                </button>
-              )}
-            </div>
-            {nro !== "NV-—" && (
-              <p className="text-[11px] text-slate-400 mt-1">
-                Asociado a <span className="font-mono">{nro}</span>.
-              </p>
-            )}
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-2">
+          <div className="mt-4 space-y-2">
             <button
-              onClick={confirmar}
-              disabled={busy}
-              className="btn-accion btn-brillo col-span-2 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg py-3 flex items-center justify-center gap-2 disabled:opacity-50"
+              onClick={abrirCierre}
+              disabled={busy || pidiendoCod}
+              className="btn-accion btn-brillo w-full bg-cyan-600 hover:bg-cyan-700 text-white font-extrabold rounded-2xl py-8 text-3xl flex items-center justify-center gap-3 disabled:opacity-50 shadow-lg ring-2 ring-cyan-400/40"
             >
-              <Check size={20} /> {busy ? "Registrando…" : "Confirmar venta"}
-            </button>
-            <button
-              onClick={() => window.print()}
-              className="btn-accion bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
-            >
-              <Printer size={18} /> Imprimir
-            </button>
-            <button
-              onClick={nuevaVenta}
-              className="btn-accion bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
-            >
-              <RotateCcw size={18} /> Nueva
+              <Check size={40} /> Confirmar venta
             </button>
             <button
               onClick={() => setVerBoleta((v) => !v)}
-              className="btn-accion col-span-2 border-2 border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
+              className="btn-accion w-full border-2 border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold rounded-lg py-2.5 flex items-center justify-center gap-2"
             >
               {verBoleta ? <EyeOff size={18} /> : <Eye size={18} />}
               {verBoleta ? "Ocultar vista previa" : "Ver vista previa de boleta"}
@@ -963,6 +1038,57 @@ export function VentaScreen() {
           />
         </div>
       </div>
+      </div>
+
+      {pidiendoCod && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 no-print"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl anim-pop p-6">
+            <button
+              onClick={() => !busy && setPidiendoCod(false)}
+              disabled={busy}
+              className="absolute top-2 right-2 text-slate-400 hover:text-slate-700 p-1 rounded disabled:opacity-30"
+              aria-label="Cancelar"
+              title="Cancelar"
+            >
+              <X size={14} />
+            </button>
+            <div className="text-xs uppercase tracking-wide text-cyan-700 font-bold mb-1">
+              Total {money(total)}
+            </div>
+            <h3 className="text-2xl font-extrabold text-slate-900 mb-1">Código de boleta</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Ingrese el folio de la boleta para registrar esta venta.
+            </p>
+            <input
+              ref={codInputRef}
+              value={codigoBoleta}
+              onChange={(e) => setCodigoBoleta(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") confirmarYImprimir();
+              }}
+              placeholder="Folio de la boleta"
+              autoCapitalize="off"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={busy}
+              className="w-full border-2 rounded-xl px-4 py-3 text-2xl font-mono text-center disabled:bg-slate-100"
+            />
+            <button
+              onClick={confirmarYImprimir}
+              disabled={busy}
+              className="btn-accion mt-4 w-full bg-cyan-600 hover:bg-cyan-700 text-white font-extrabold rounded-xl py-4 text-xl flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <Check size={24} /> {busy ? "Registrando…" : "Confirmar e imprimir"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
