@@ -40,7 +40,7 @@ Ve a **Admin → Importar catálogo**. Sube los 3.374 productos extraídos del E
 ## Modelo de datos (Firestore)
 - `productos/{codigo}` → `{ codigo, descripcion, lote, stockActual, costo, precio }`
 - `ventas/{nro}` → `{ nro, fecha, cliente, items[], total, creadoEn, vendedor }`
-- `contadores/ventas` → `{ ultimo }` (correlativo NV-###)
+- `contadores/ventas` → `{ ultimo }` (correlativo NV-######)
 
 El stock se mantiene en el campo `stockActual` y se descuenta de forma atómica
 (`increment`) al confirmar cada venta — no se recalcula con SUMIFS como en el Excel.

@@ -20,7 +20,11 @@ import {
   UserPlus,
   Minimize2,
   Maximize2,
+  Wallet,
+  PlayCircle,
+  StopCircle,
 } from "lucide-react";
+import Link from "next/link";
 import {
   buscarParaVenta,
   confirmarVenta,
@@ -30,6 +34,7 @@ import {
   todosLosProductos,
   cajaAbierta,
   ventasEnRango,
+  abrirCaja,
 } from "@/lib/repo";
 import {
   subtotalLinea,
@@ -37,6 +42,7 @@ import {
   type Producto,
   type Cliente,
   type MedioPago,
+  type Caja,
 } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
 import { useVendedor } from "@/lib/vendedor";
@@ -85,6 +91,17 @@ export function VentaScreen() {
   // pantalla hasta que el cajero la descarte.
   const [alertaCaja, setAlertaCaja] = useState<{ saldo: number; umbral: number } | null>(null);
   const [alertaMinimizada, setAlertaMinimizada] = useState(false);
+  // Eliminada por el cajero. Vuelve a aparecer recién cuando un retiro baja el
+  // saldo bajo el umbral y una venta posterior lo cruza de nuevo.
+  const [alertaDescartada, setAlertaDescartada] = useState(false);
+  // Caja del turno actual (null = no hay caja abierta). Si no hay caja, se
+  // muestra un banner para abrirla desde aquí sin tener que ir a /caja.
+  const [cajaActiva, setCajaActiva] = useState<Caja | null>(null);
+  const [abrirCajaModal, setAbrirCajaModal] = useState(false);
+  const [fondoApertura, setFondoApertura] = useState(0);
+  const [umbralApertura, setUmbralApertura] = useState(200000);
+  const [abriendoCaja, setAbriendoCaja] = useState(false);
+  const [errorCaja, setErrorCaja] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const codInputRef = useRef<HTMLInputElement>(null);
 
@@ -107,11 +124,39 @@ export function VentaScreen() {
   }, []);
 
   // Al cargar la pantalla, evalúa el estado actual de la caja para mostrar la
-  // alarma si el efectivo ya viene sobre el umbral de un turno anterior.
+  // alarma si el efectivo ya viene sobre el umbral de un turno anterior, y
+  // carga la caja activa para el banner de apertura.
   useEffect(() => {
     evaluarCaja().catch(() => {});
+    refrescarCajaActiva().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function refrescarCajaActiva() {
+    try {
+      setCajaActiva(await cajaAbierta());
+    } catch {
+      setCajaActiva(null);
+    }
+  }
+
+  // Abre la caja del turno con el vendedor del header. No pedimos el nombre:
+  // viene del chip de vendedor del header (useVendedor).
+  async function confirmarAbrirCaja() {
+    if (abriendoCaja) return;
+    setErrorCaja("");
+    setAbriendoCaja(true);
+    try {
+      await abrirCaja(fondoApertura, umbralApertura, vendedor);
+      setAbrirCajaModal(false);
+      await refrescarCajaActiva();
+      setMsg(`Caja abierta por ${vendedor || "sin vendedor"}.`);
+    } catch (e) {
+      setErrorCaja((e as Error).message || "No se pudo abrir la caja.");
+    } finally {
+      setAbriendoCaja(false);
+    }
+  }
 
   // Calcula el saldo actual de la caja abierta y actualiza la alerta:
   // - Si supera el umbral, mantiene el banner visible con el saldo al día.
@@ -134,8 +179,15 @@ export function VentaScreen() {
     const antes = ahora - montoVenta;
     const supera = ahora > caja.umbralRetiro;
     setAlertaCaja((prev) => {
-      // Si pasamos de no-alerta a alerta, des-minimizamos para que se vea grande.
-      if (supera && !prev) setAlertaMinimizada(false);
+      // Transición no-alerta → alerta: reseteamos los estados de visibilidad
+      // para que el banner grande vuelva a aparecer en todo su tamaño.
+      if (supera && !prev) {
+        setAlertaMinimizada(false);
+        setAlertaDescartada(false);
+      }
+      // Si dejó de superar el umbral, también reseteamos descartada para que
+      // el próximo cruce se muestre de nuevo.
+      if (!supera && prev) setAlertaDescartada(false);
       return supera ? { saldo: ahora, umbral: caja.umbralRetiro } : null;
     });
     return { antes, ahora, umbral: caja.umbralRetiro };
@@ -363,6 +415,13 @@ export function VentaScreen() {
     if (medioPago === "fiado" && !clienteId)
       return setMsg("Seleccione o cree un cliente para fiar.");
     setMsg("");
+    // En transferencia no hay boleta física que tenga folio asociado, así que
+    // saltamos el panel y registramos directamente.
+    if (medioPago === "transferencia") {
+      setCodigoBoleta("");
+      confirmarYImprimir();
+      return;
+    }
     setPidiendoCod(true);
     setTimeout(() => codInputRef.current?.focus(), 50);
   }
@@ -455,29 +514,89 @@ export function VentaScreen() {
 
   return (
     <div className="space-y-4">
-      {alertaCaja && (
-        alertaMinimizada ? (
+      {!cajaActiva && (
+        <div className="rounded-2xl border-2 border-cyan-400 bg-gradient-to-r from-cyan-50 to-sky-50 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4 shadow no-print">
+          <Wallet size={48} className="text-cyan-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-extrabold text-slate-900 text-xl leading-tight">
+              No hay caja abierta
+            </div>
+            <div className="text-sm text-slate-700 mt-0.5">
+              Hoy trabaja: <strong>{vendedor || "Sin vendedor"}</strong>. Abre la caja para llevar el control del efectivo del turno.
+            </div>
+          </div>
           <button
-            onClick={() => setAlertaMinimizada(false)}
-            className="w-full rounded-xl border-2 border-red-500 bg-red-600 text-white px-4 py-2 flex items-center gap-3 shadow-md hover:bg-red-700 no-print"
-            title="Mostrar alarma"
+            onClick={() => {
+              setFondoApertura(0);
+              setUmbralApertura(200000);
+              setErrorCaja("");
+              setAbrirCajaModal(true);
+            }}
+            className="btn-accion bg-cyan-600 hover:bg-cyan-700 text-white font-bold rounded-xl px-5 py-3 flex items-center gap-2 shrink-0 shadow"
           >
-            <AlertTriangle size={20} className="shrink-0 animate-pulse" />
-            <span className="font-bold flex-1 text-left truncate">
-              Caja sobre umbral: {money(alertaCaja.saldo)} (límite {money(alertaCaja.umbral)})
-            </span>
-            <Maximize2 size={16} className="shrink-0 opacity-80" />
+            <PlayCircle size={20} /> Abrir caja
           </button>
+        </div>
+      )}
+
+      {cajaActiva && (
+        <div className="rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2 flex flex-wrap items-center gap-3 text-sm no-print">
+          <Wallet size={18} className="text-emerald-700 shrink-0" />
+          <span className="text-emerald-900 flex-1 min-w-0">
+            Caja abierta por <strong>{cajaActiva.abridoPor || "—"}</strong> · fondo {money(cajaActiva.fondoInicial)} · umbral {money(cajaActiva.umbralRetiro)}
+          </span>
+          <Link
+            href="/caja"
+            className="text-emerald-800 hover:text-white hover:bg-emerald-700 border border-emerald-400 hover:border-emerald-700 rounded-lg px-3 py-1.5 font-semibold flex items-center gap-1.5 shrink-0"
+          >
+            <StopCircle size={16} /> Cerrar caja
+          </Link>
+        </div>
+      )}
+
+      {alertaCaja && !alertaDescartada && (
+        alertaMinimizada ? (
+          <div className="w-full rounded-xl border-2 border-red-500 bg-red-600 text-white px-3 py-2 flex items-center gap-2 shadow-md no-print">
+            <button
+              onClick={() => setAlertaMinimizada(false)}
+              className="flex-1 flex items-center gap-3 text-left min-w-0 hover:opacity-90"
+              title="Mostrar alarma"
+            >
+              <AlertTriangle size={20} className="shrink-0 animate-pulse" />
+              <span className="font-bold flex-1 truncate">
+                Caja sobre umbral: {money(alertaCaja.saldo)} (límite {money(alertaCaja.umbral)})
+              </span>
+              <Maximize2 size={16} className="shrink-0 opacity-80" />
+            </button>
+            <button
+              onClick={() => setAlertaDescartada(true)}
+              className="shrink-0 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg p-1.5"
+              aria-label="Eliminar alarma"
+              title="Eliminar (reaparece sólo si baja del umbral y vuelve a cruzarlo)"
+            >
+              <X size={16} />
+            </button>
+          </div>
         ) : (
           <div className="relative rounded-2xl border-4 border-red-500 bg-gradient-to-r from-red-600 to-red-700 p-6 flex items-center gap-5 shadow-2xl animate-pulse no-print">
-            <button
-              onClick={() => setAlertaMinimizada(true)}
-              className="absolute top-2 right-2 text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg p-1.5"
-              aria-label="Minimizar alarma"
-              title="Minimizar"
-            >
-              <Minimize2 size={18} />
-            </button>
+            <div className="absolute top-2 right-2 flex items-center gap-1">
+              <button
+                onClick={() => setAlertaMinimizada(true)}
+                className="text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg p-1.5"
+                aria-label="Minimizar alarma"
+                title="Minimizar"
+              >
+                <Minimize2 size={18} />
+              </button>
+              <button
+                onClick={() => setAlertaDescartada(true)}
+                className="text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-lg p-1.5"
+                aria-label="Eliminar alarma"
+                title="Eliminar (reaparece sólo si baja del umbral y vuelve a cruzarlo)"
+              >
+                <X size={18} />
+              </button>
+            </div>
             <AlertTriangle size={64} className="text-white shrink-0 drop-shadow" />
             <div className="flex-1 min-w-0">
               <div className="font-extrabold text-white text-3xl sm:text-4xl leading-tight tracking-tight drop-shadow">
@@ -1039,6 +1158,82 @@ export function VentaScreen() {
         </div>
       </div>
       </div>
+
+      {abrirCajaModal && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 no-print"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            onClick={() => !abriendoCaja && setAbrirCajaModal(false)}
+          />
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl anim-pop p-6">
+            <button
+              onClick={() => !abriendoCaja && setAbrirCajaModal(false)}
+              disabled={abriendoCaja}
+              className="absolute top-2 right-2 text-slate-400 hover:text-slate-700 p-1 rounded disabled:opacity-30"
+              aria-label="Cancelar"
+              title="Cancelar"
+            >
+              <X size={16} />
+            </button>
+            <h3 className="text-2xl font-extrabold text-slate-900 mb-1 flex items-center gap-2">
+              <Wallet size={26} className="text-cyan-600" /> Abrir caja
+            </h3>
+            <p className="text-sm text-slate-500 mb-4">
+              Se abre como <strong className="text-slate-800">{vendedor || "Sin vendedor"}</strong>{" "}
+              (cámbialo en el chip del header si te equivocaste).
+            </p>
+            <label className="block mb-3">
+              <span className="text-sm text-slate-600 font-medium">Fondo inicial</span>
+              <input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                autoFocus
+                value={fondoApertura || ""}
+                onChange={(e) => setFondoApertura(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="0"
+                className="mt-1 w-full border-2 rounded-xl px-4 py-3 text-xl"
+              />
+            </label>
+            <label className="block mb-3">
+              <span className="text-sm text-slate-600 font-medium">
+                Umbral de retiro (alerta sobre este saldo)
+              </span>
+              <input
+                type="number"
+                min={0}
+                inputMode="numeric"
+                value={umbralApertura || ""}
+                onChange={(e) => setUmbralApertura(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="0 = sin alerta"
+                className="mt-1 w-full border-2 rounded-xl px-4 py-3 text-xl"
+              />
+            </label>
+            {errorCaja && (
+              <div className="mb-3 text-sm rounded-lg bg-red-50 border border-red-200 text-red-700 px-3 py-2">
+                {errorCaja}
+              </div>
+            )}
+            <button
+              onClick={confirmarAbrirCaja}
+              disabled={abriendoCaja || !vendedor}
+              className="btn-accion w-full bg-cyan-600 hover:bg-cyan-700 text-white font-extrabold rounded-xl py-4 text-xl flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <PlayCircle size={24} />
+              {abriendoCaja ? "Abriendo…" : "Abrir caja"}
+            </button>
+            {!vendedor && (
+              <p className="text-[11px] text-red-600 mt-2 text-center">
+                Necesitas indicar tu nombre en el chip del header antes de abrir la caja.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {pidiendoCod && (
         <div

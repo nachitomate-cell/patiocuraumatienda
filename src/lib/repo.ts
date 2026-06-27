@@ -390,7 +390,8 @@ export async function importarCatalogo(
   return hechos;
 }
 
-// Correlativo NV-### atomico mediante un documento contador.
+// Correlativo NV-###### atomico mediante un documento contador. Padding a 6
+// dígitos para que no se rompa la alineación al pasar las 999 ventas.
 export async function siguienteNroVenta(): Promise<string> {
   const db = getDb();
   const ref = tdoc(CONTADORES, "ventas");
@@ -401,7 +402,7 @@ export async function siguienteNroVenta(): Promise<string> {
     tx.set(ref, { ultimo: siguiente }, { merge: true });
     return siguiente;
   });
-  return "NV-" + String(n).padStart(3, "0");
+  return "NV-" + String(n).padStart(6, "0");
 }
 
 // Confirma una venta: registra el documento y descuenta stock de forma atomica.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
@@ -21,6 +21,8 @@ import {
   Wallet,
   LogIn,
   Receipt,
+  MoreHorizontal,
+  ChevronDown,
 } from "lucide-react";
 import { useUiMode } from "@/lib/uimode";
 import { useAtajos } from "@/lib/useAtajos";
@@ -32,13 +34,17 @@ import { Modal } from "@/components/Modal";
 const NAV = [
   { href: "/venta", label: "Venta", Icon: ShoppingCart },
   { href: "/caja", label: "Caja", Icon: Wallet },
+  { href: "/historial", label: "Historial", Icon: History },
   { href: "/entradas", label: "Entradas", Icon: PackagePlus },
   { href: "/stock", label: "Stock", Icon: Boxes },
   { href: "/etiquetas", label: "Etiquetas", Icon: Barcode },
-  { href: "/fiados", label: "Fiados", Icon: Notebook },
   { href: "/emprendedores", label: "Emprendedores", Icon: Store },
   { href: "/crm", label: "CRM", Icon: BarChart3 },
-  { href: "/historial", label: "Historial", Icon: History },
+];
+
+// Menú agrupado para descongestionar el header en desktop.
+const OTROS = [
+  { href: "/fiados", label: "Fiados", Icon: Notebook },
   { href: "/boleta", label: "Boleta", Icon: Receipt },
   { href: "/admin", label: "Admin", Icon: Settings },
 ];
@@ -51,6 +57,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const vendedor = useVendedor();
   const [ayuda, setAyuda] = useState(false);
   const [editarVendedor, setEditarVendedor] = useState(false);
+  const [otrosAbierto, setOtrosAbierto] = useState(false);
+  const otrosRef = useRef<HTMLDivElement>(null);
+
+  // Cierra el dropdown "Otros" al hacer click fuera o presionar Escape.
+  useEffect(() => {
+    if (!otrosAbierto) return;
+    function fueraClick(e: MouseEvent) {
+      if (otrosRef.current && !otrosRef.current.contains(e.target as Node)) {
+        setOtrosAbierto(false);
+      }
+    }
+    function esc(e: KeyboardEvent) {
+      if (e.key === "Escape") setOtrosAbierto(false);
+    }
+    document.addEventListener("mousedown", fueraClick);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", fueraClick);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [otrosAbierto]);
+
+  // Cierra el dropdown al navegar.
+  useEffect(() => {
+    setOtrosAbierto(false);
+  }, [path]);
+
+  const otrosActive = OTROS.some((o) => path === o.href || path.startsWith(o.href + "/"));
 
   // Hidratación: useVendedor devuelve "" en SSR. Esperamos al primer efecto
   // para conocer el valor real de localStorage; así evitamos el flash de la
@@ -114,6 +148,50 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </Link>
               );
             })}
+
+            <div ref={otrosRef} className="relative shrink-0">
+              <button
+                onClick={() => setOtrosAbierto((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={otrosAbierto}
+                className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${
+                  otrosActive
+                    ? "bg-cyan-500 text-slate-900 font-semibold"
+                    : "hover:bg-slate-700 text-slate-200"
+                }`}
+              >
+                <MoreHorizontal size={18} strokeWidth={2.2} />
+                <span className="hidden xl:inline">Otros</span>
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${otrosAbierto ? "rotate-180" : ""}`}
+                />
+              </button>
+              {otrosAbierto && (
+                <div
+                  role="menu"
+                  className="absolute left-0 sm:left-auto sm:right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl py-1 min-w-[180px] z-50 anim-pop"
+                >
+                  {OTROS.map(({ href, label, Icon }) => {
+                    const active = path === href || path.startsWith(href + "/");
+                    return (
+                      <Link
+                        key={href}
+                        href={href}
+                        onClick={() => setOtrosAbierto(false)}
+                        className={`flex items-center gap-2 px-3 py-2 text-sm ${
+                          active
+                            ? "bg-cyan-500 text-slate-900 font-semibold"
+                            : "text-slate-200 hover:bg-slate-700"
+                        }`}
+                      >
+                        <Icon size={16} strokeWidth={2.2} /> {label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </nav>
 
           <div className="text-xs flex items-center gap-1.5 sm:gap-2 shrink-0">
