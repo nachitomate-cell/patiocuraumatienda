@@ -464,16 +464,27 @@ export function VentaScreen() {
       if (medioPago === "efectivo") {
         chequearAlertaCaja(total);
       }
-      // Esperar a que React pinte la boleta con el nro nuevo, imprimir y, al
-      // cerrar el diálogo (impreso o cancelado), arrancar una venta nueva.
-      setTimeout(() => {
-        const onAfter = () => {
-          window.removeEventListener("afterprint", onAfter);
-          nuevaVenta();
-        };
-        window.addEventListener("afterprint", onAfter);
-        window.print();
-      }, 80);
+      // Esperar a que React pinte la boleta con el nro nuevo y el modal se
+      // haya cerrado del DOM, imprimir y, al cerrar el diálogo (impreso o
+      // cancelado), arrancar una venta nueva. Doble RAF + timeout extra para
+      // que el navegador no descarte el print por timing.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const onAfter = () => {
+              window.removeEventListener("afterprint", onAfter);
+              nuevaVenta();
+            };
+            window.addEventListener("afterprint", onAfter);
+            try {
+              window.print();
+            } catch {
+              setMsg("No se pudo abrir el diálogo de impresión. Imprimí desde el menú del navegador (Ctrl+P).");
+              window.removeEventListener("afterprint", onAfter);
+            }
+          }, 120);
+        });
+      });
     } catch {
       setMsg("Error al registrar la venta. Revise su conexión o reglas de Firestore.");
     } finally {

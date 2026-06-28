@@ -375,6 +375,7 @@ export function HistorialScreen() {
               <th className="text-left px-3 py-2">N° venta</th>
               <th className="text-left px-3 py-2">Fecha</th>
               <th className="text-left px-3 py-2">Cliente</th>
+              <th className="text-left px-3 py-2">Medio</th>
               <th className="text-right px-3 py-2">Ítems</th>
               <th className="text-right px-3 py-2">Total</th>
             </tr>
@@ -382,21 +383,21 @@ export function HistorialScreen() {
           <tbody>
             {cargando && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
                   Cargando historial…
                 </td>
               </tr>
             )}
             {!cargando && error && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-red-500">
+                <td colSpan={7} className="px-3 py-8 text-center text-red-500">
                   {error}
                 </td>
               </tr>
             )}
             {!cargando && !error && filtradas.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
                   No hay ventas registradas
                 </td>
               </tr>
@@ -559,6 +560,9 @@ function FilaVenta({
             </span>
           )}
         </td>
+        <td className={`px-3 py-2 ${anulada ? "text-slate-400" : ""}`}>
+          <BadgeMedio medio={v.medioPago} anulada={anulada} />
+        </td>
         <td className={`px-3 py-2 text-right ${anulada ? "text-slate-400" : ""}`}>
           {v.items.length}
         </td>
@@ -573,7 +577,7 @@ function FilaVenta({
       {abierto && (
         <tr className="bg-slate-50">
           <td></td>
-          <td colSpan={5} className="px-3 py-2">
+          <td colSpan={6} className="px-3 py-2">
             <table className="w-full text-xs anim-pop">
               <thead className="text-slate-500">
                 <tr>
@@ -1237,5 +1241,28 @@ function ModalDevolucion({
         </div>
       )}
     </Modal>
+  );
+}
+
+// Badge compacto de medio de pago para la tabla del historial. Color
+// distinto por medio para que el cajero ubique de un vistazo.
+function BadgeMedio({ medio, anulada }: { medio?: string; anulada: boolean }) {
+  if (!medio) return <span className="text-slate-300 text-xs">—</span>;
+  const ESTILOS: Record<string, { label: string; cls: string }> = {
+    efectivo: { label: "Efectivo", cls: "bg-emerald-100 text-emerald-800" },
+    debito: { label: "Débito", cls: "bg-cyan-100 text-cyan-800" },
+    credito: { label: "Crédito", cls: "bg-indigo-100 text-indigo-800" },
+    transferencia: { label: "Transfer.", cls: "bg-slate-100 text-slate-700" },
+    fiado: { label: "Fiado", cls: "bg-amber-100 text-amber-800" },
+  };
+  const e = ESTILOS[medio] ?? { label: medio, cls: "bg-slate-100 text-slate-700" };
+  return (
+    <span
+      className={`inline-block text-xs font-semibold rounded px-2 py-0.5 ${
+        anulada ? "bg-slate-100 text-slate-400" : e.cls
+      }`}
+    >
+      {e.label}
+    </span>
   );
 }
