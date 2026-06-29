@@ -1,6 +1,6 @@
 // Service worker minimo para que la PWA abra sin conexion (app shell).
 // Los datos de negocio los maneja Firestore con su cache offline propia.
-const CACHE = "patio-pos-v2";
+const CACHE = "patio-pos-v3";
 const APP_SHELL = ["/", "/venta", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -23,6 +23,9 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(req.url);
   // No interceptar llamadas a Firebase/Google: las gestiona el SDK.
   if (/firebase|googleapis|gstatic/.test(url.host)) return;
+  // Tampoco interceptar nuestras propias API routes: deben ir siempre en
+  // vivo a Vercel y nunca devolver un "offline" sintético.
+  if (url.pathname.startsWith("/api/")) return;
 
   // respondWith() exige SIEMPRE un Response; si se resuelve a undefined el
   // navegador lanza "Failed to convert value to 'Response'". Por eso todas las

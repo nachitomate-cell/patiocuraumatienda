@@ -16,12 +16,25 @@ import { getDb, getAuthInstance } from "@/lib/firebase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// CORS abierto: el endpoint ya está autenticado por token, no hay riesgo de
+// que un sitio público lo abuse desde el navegador del usuario final.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+
+export function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
+
 export async function GET(req: NextRequest) {
   const expectedToken = process.env.INVENTARIO_API_TOKEN;
   if (!expectedToken) {
     return NextResponse.json(
       { error: "API no configurada: falta INVENTARIO_API_TOKEN." },
-      { status: 500 }
+      { status: 500, headers: CORS_HEADERS }
     );
   }
 
@@ -29,7 +42,7 @@ export async function GET(req: NextRequest) {
   if (auth !== `Bearer ${expectedToken}`) {
     return NextResponse.json(
       { error: "No autorizado." },
-      { status: 401, headers: { "WWW-Authenticate": "Bearer" } }
+      { status: 401, headers: { ...CORS_HEADERS, "WWW-Authenticate": "Bearer" } }
     );
   }
 
@@ -79,6 +92,7 @@ export async function GET(req: NextRequest) {
       },
       {
         headers: {
+          ...CORS_HEADERS,
           // Sin cache: cada request consulta Firestore fresco para que el
           // consumidor siempre vea el stock real.
           "Cache-Control": "no-store",
@@ -88,7 +102,7 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     return NextResponse.json(
       { error: (e as Error).message || "Error consultando inventario." },
-      { status: 500 }
+      { status: 500, headers: CORS_HEADERS }
     );
   }
 }
