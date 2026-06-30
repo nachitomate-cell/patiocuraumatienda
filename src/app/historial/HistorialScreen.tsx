@@ -18,6 +18,8 @@ import {
   CalendarRange,
   Printer,
   Ban,
+  PackagePlus,
+  Users,
 } from "lucide-react";
 import { Ticket } from "@/components/Ticket";
 import * as XLSX from "xlsx";
@@ -30,10 +32,12 @@ import {
   ventasEnRango,
   devolucionesEnRango,
   actualizarCodigoBoleta,
+  ingresosDeEmprendedoresEnRango,
 } from "@/lib/repo";
 import {
   subtotalLinea,
   type Devolucion,
+  type IngresoEmprendedor,
   type LineaVenta,
   type Venta,
 } from "@/lib/types";
@@ -60,13 +64,88 @@ export function HistorialScreen() {
   const [descargando, setDescargando] = useState<"diario" | "semanal" | null>(null);
   const [reporteErr, setReporteErr] = useState("");
 
-  async function cargar() {
+  // Sección "Ingresos del día": eventos de alta y reposición que llegan vía
+  // /alta/{token}. Se carga por separado del historial de ventas y permite
+  // navegar otros días con el selector de fecha.
+  const [fechaIng, setFechaIng] = useState(hoyISO());
+  const [ingresos, setIngresos] = useState<IngresoEmprendedor[]>([]);
+  const [cargandoIng, setCargandoIng] = useState(true);
+  const [errorIng, setErrorIng] = useState("");
+
+  async function cargarIngresos(fecha: string) {
+    setCargandoIng(true);
+    setErrorIng("");
+    try {
+      // Rango [00:00:00, 23:59:59.999] en horario local de la fecha.
+      const [y, m, d] = fecha.split("-").map(Number);
+      const desde = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+      const hasta = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+      const items = await ingresosDeEmprendedoresEnRango(desde, hasta);
+      setIngresos(items);
+    } catch (e) {
+      // Detalle del error de Firestore (incluye el link de "create index"
+      // cuando falta el índice de la collectionGroup). Lo mostramos tal cual
+      // para que el admin lo pueda abrir y resolver en 1 click.
+      const msg = e instanceof Error ? e.message : String(e);
+      setErrorIng(msg);
+    } finally {
+      setCargandoIng(false);
+    }
+  }
+
+  useEffect(() => {
+    cargarIngresos(fechaIng);
+  }, [fechaIng]);
+
+  const resumenIng = useMemo(() => {
+    let unidades = 0;
+    let altas = 0;
+    let reposiciones = 0;
+    const emps = new Set<string>();
+    for (const x of ingresos) {
+      unidades += x.cantidad;
+      if (x.tipo === "alta") altas++;
+      else reposiciones++;
+      emps.add(x.emprendedorId);
+    }
+    return { unidades, altas, reposiciones, nEmp: emps.size };
+  }, [ingresos]);
+
+  // "alcance" decide cuántos documentos pedirle a Firestore:
+  //   - "hoy" (default): rango [00:00, 23:59] de hoy. Una jornada típica son
+  //     decenas de ventas, no 300. Esto baja la spike de ~600 lecturas
+  //     (300 ventas + 300 devoluciones) por carga a las que realmente hubo.
+  //   - "historico": últimas 300 (comportamiento legacy). El usuario lo
+  //     activa con un botón cuando necesita buscar una venta vieja.
+  const [alcance, setAlcance] = useState<"hoy" | "historico">("hoy");
+
+  async function cargar(modo: "hoy" | "historico" = alcance) {
     setCargando(true);
     setError("");
     try {
-      const [vs, ds] = await Promise.all([ultimasVentas(300), ultimasDevoluciones(300)]);
+      let vs: Venta[];
+      let ds: Devolucion[];
+      if (modo === "hoy") {
+        const ahora = new Date();
+        const inicio = new Date(
+          ahora.getFullYear(), ahora.getMonth(), ahora.getDate(), 0, 0, 0, 0
+        ).getTime();
+        const fin = new Date(
+          ahora.getFullYear(), ahora.getMonth(), ahora.getDate(), 23, 59, 59, 999
+        ).getTime();
+        [vs, ds] = await Promise.all([
+          ventasEnRango(inicio, fin),
+          devolucionesEnRango(inicio, fin),
+        ]);
+        // ventasEnRango ordena asc; el historial muestra más reciente primero.
+        vs = vs.slice().reverse();
+        ds = ds.slice().reverse();
+      } else {
+        [vs, ds] = await Promise.all([ultimasVentas(300), ultimasDevoluciones(300)]);
+      }
       setVentas(vs);
       setDevoluciones(ds);
+      setAlcance(modo);
     } catch {
       setError("No se pudo cargar el historial. Revise conexión o reglas de Firestore.");
     } finally {
@@ -75,7 +154,8 @@ export function HistorialScreen() {
   }
 
   useEffect(() => {
-    cargar();
+    cargar("hoy");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Devoluciones agrupadas por nro de venta para no buscar linealmente en cada
@@ -259,8 +339,174 @@ export function HistorialScreen() {
     }
   }
 
+  const esHoyIng = fechaIng === hoyISO();
+
   return (
     <div className="space-y-4">
+      {/* Ingresos del día: refleja lo que cargaron los emprendedores desde
+          /alta/{token} (alta de productos y "Recibí" en stock). Sección
+          independiente del historial de ventas: vive arriba para visibilidad
+          inmediata al abrir Historial. */}
+      <div className="bg-white rounded-xl shadow p-4 anim-in">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h2 className="font-bold text-slate-900 flex items-center gap-2">
+              <PackagePlus className="text-emerald-600" size={20} />
+              Ingresos de emprendedores {esHoyIng && <span className="text-emerald-700">(hoy)</span>}
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Lo que cargaron los emprendedores en {" "}
+              <span className="font-mono text-slate-700">/alta/{"{token}"}</span>: altas
+              nuevas y stock que declararon haber traído.
+            </p>
+          </div>
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="text-sm">
+              <span className="text-slate-500 text-xs">Día</span>
+              <SelectorFecha value={fechaIng} onChange={setFechaIng} className="mt-0.5" />
+            </div>
+            <button
+              onClick={() => cargarIngresos(fechaIng)}
+              disabled={cargandoIng}
+              className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+            >
+              <RefreshCw size={16} className={cargandoIng ? "animate-spin" : ""} />
+              Refrescar
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+          <ResumenIng label="Eventos" valor={ingresos.length.toString()} />
+          <ResumenIng
+            label="Unidades"
+            valor={`${resumenIng.unidades} u.`}
+            acento="emerald"
+          />
+          <ResumenIng label="Altas" valor={resumenIng.altas.toString()} acento="cyan" />
+          <ResumenIng
+            label="Emprendedores"
+            valor={resumenIng.nEmp.toString()}
+            icono={<Users size={12} />}
+          />
+        </div>
+
+        {errorIng && (
+          <div className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg px-3 py-2 mb-2 space-y-1">
+            <p className="font-semibold">No se pudieron cargar los ingresos.</p>
+            <p className="font-mono break-all whitespace-pre-wrap">{errorIng}</p>
+            {/firestore\.indexes/.test(errorIng) && (
+              <p>
+                👉 Falta el índice de Firestore. En el mensaje de arriba hay un link
+                que termina en <span className="font-mono">create_composite=...</span>:
+                ábrelo en el navegador y presiona <b>Crear índice</b>.
+              </p>
+            )}
+            {/permission|insufficient/i.test(errorIng) && (
+              <p>
+                👉 Las reglas de Firestore no permiten leer la subcolección
+                <span className="font-mono"> movimientos</span> en modo collectionGroup.
+                Publica <span className="font-mono">firestore.rules</span> en la consola.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="tabla-scroll">
+          <table className="w-full text-sm min-w-[640px]">
+            <thead className="bg-slate-100 text-slate-600">
+              <tr>
+                <th className="text-left px-3 py-2 w-16">Hora</th>
+                <th className="text-left px-3 py-2">Emprendedor</th>
+                <th className="text-left px-3 py-2">Producto</th>
+                <th className="text-right px-3 py-2 w-20">Cantidad</th>
+                <th className="text-left px-3 py-2 w-28">Tipo</th>
+                <th className="text-left px-3 py-2 w-24">Origen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cargandoIng && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                    Cargando ingresos…
+                  </td>
+                </tr>
+              )}
+              {!cargandoIng && !errorIng && ingresos.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                    {esHoyIng
+                      ? "Aún no hay ingresos cargados hoy."
+                      : "No hubo ingresos ese día."}
+                    {esHoyIng && (
+                      <div className="mt-2 text-[11px] text-slate-400">
+                        Si acabás de cargar productos desde /alta, recargá esa pestaña
+                        con Ctrl+Shift+R y volvé a cargar uno: los productos viejos
+                        no tienen el campo <span className="font-mono">negocioId</span>.
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )}
+              {ingresos.map((x, i) => {
+                const hora = new Date(x.en).toLocaleTimeString("es-CL", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                return (
+                  <tr key={`${x.emprendedorId}-${x.en}-${i}`} className="border-t hover:bg-slate-50">
+                    <td className="px-3 py-2 text-slate-600 font-mono text-xs">{hora}</td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-slate-800">{x.emprendedorNombre}</div>
+                      <div className="text-[10px] uppercase tracking-wide text-slate-400 font-mono">
+                        {x.emprendedorPrefijo}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="text-slate-800 truncate max-w-[260px]" title={x.descripcion}>
+                        {x.descripcion || "—"}
+                      </div>
+                      <div className="text-xs text-slate-500 font-mono">
+                        {x.codigo}
+                        {x.tipo === "alta" && x.precio !== undefined && (
+                          <span className="ml-2 text-slate-400">{money(x.precio)}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-right font-semibold text-emerald-700">
+                      +{x.cantidad}
+                    </td>
+                    <td className="px-3 py-2">
+                      {x.tipo === "alta" ? (
+                        <span className="inline-block text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 bg-cyan-100 text-cyan-800">
+                          Producto nuevo
+                        </span>
+                      ) : (
+                        <span className="inline-block text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 bg-emerald-100 text-emerald-800">
+                          Reposición
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`inline-block text-[10px] font-semibold uppercase tracking-wide rounded px-1.5 py-0.5 ${
+                          x.origen === "emprendedor"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-slate-100 text-slate-700"
+                        }`}
+                        title={`Cargado por ${x.por}`}
+                      >
+                        {x.origen === "emprendedor" ? "Emprendedor" : "Admin"}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       {/* Reportes: ataja la búsqueda manual por fecha. Consulta Firestore por
           rango y arma un Excel con resumen + ventas + devoluciones del periodo. */}
       <div className="bg-white rounded-xl shadow p-4 anim-in">
@@ -306,8 +552,36 @@ export function HistorialScreen() {
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
           <h1 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <History className="text-cyan-600" size={22} /> Historial de ventas
+            <span
+              className={`text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 ${
+                alcance === "hoy"
+                  ? "bg-emerald-100 text-emerald-800"
+                  : "bg-slate-200 text-slate-700"
+              }`}
+            >
+              {alcance === "hoy" ? "Hoy" : "Últimas 300"}
+            </span>
           </h1>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {alcance === "hoy" ? (
+              <button
+                onClick={() => cargar("historico")}
+                disabled={cargando}
+                title="Carga las últimas 300 ventas para buscar una antigua"
+                className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              >
+                <CalendarRange size={16} /> Cargar últimas 300
+              </button>
+            ) : (
+              <button
+                onClick={() => cargar("hoy")}
+                disabled={cargando}
+                title="Vuelve al modo liviano: solo ventas de hoy"
+                className="flex items-center gap-1.5 border border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              >
+                <CalendarDays size={16} /> Solo hoy
+              </button>
+            )}
             <button
               onClick={exportar}
               className="flex items-center gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-3 py-2 text-sm"
@@ -315,10 +589,11 @@ export function HistorialScreen() {
               <Download size={16} /> Exportar
             </button>
             <button
-              onClick={cargar}
-              className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm"
+              onClick={() => cargar()}
+              disabled={cargando}
+              className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
             >
-              <RefreshCw size={16} /> Refrescar
+              <RefreshCw size={16} className={cargando ? "animate-spin" : ""} /> Refrescar
             </button>
           </div>
         </div>
@@ -1241,6 +1516,35 @@ function ModalDevolucion({
         </div>
       )}
     </Modal>
+  );
+}
+
+// Mini-card de resumen para la sección "Ingresos del día".
+function ResumenIng({
+  label,
+  valor,
+  acento,
+  icono,
+}: {
+  label: string;
+  valor: string;
+  acento?: "emerald" | "cyan";
+  icono?: React.ReactNode;
+}) {
+  const cls =
+    acento === "emerald"
+      ? "text-emerald-700"
+      : acento === "cyan"
+      ? "text-cyan-700"
+      : "text-slate-800";
+  return (
+    <div className="bg-slate-50 rounded-lg p-3">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500 flex items-center gap-1">
+        {icono}
+        {label}
+      </div>
+      <div className={`text-base font-bold mt-0.5 ${cls}`}>{valor}</div>
+    </div>
   );
 }
 

@@ -128,6 +128,26 @@ export interface MovimientoEmprendedor {
   despues?: string;
 }
 
+// Evento de ingreso de stock atribuible a un emprendedor: o bien dio de alta
+// un producto nuevo desde /alta/{token}, o bien declaró "Recibí" más unidades
+// de uno existente. Se deriva de la bitácora del emprendedor (movimientos),
+// no se persiste como entidad propia: el historial del POS lo arma sobre la
+// marcha cruzando todos los emprendedores.
+export interface IngresoEmprendedor {
+  en: number; // epoch ms del movimiento original
+  emprendedorId: string;
+  emprendedorNombre: string;
+  emprendedorPrefijo: string;
+  // "alta" = producto nuevo cargado; "reposicion" = stock_cambiado con delta > 0.
+  tipo: "alta" | "reposicion";
+  codigo: string;
+  descripcion: string;
+  cantidad: number; // unidades efectivamente ingresadas
+  precio?: number; // solo en alta (se parsea del campo "despues")
+  por: string; // nombre del actor que registró el movimiento
+  origen: "admin" | "emprendedor";
+}
+
 export interface LineaEntrada {
   codigo: string;
   descripcion: string;

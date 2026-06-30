@@ -1,5 +1,6 @@
 import {
   collection,
+  collectionGroup,
   doc,
   addDoc,
   getDoc,
@@ -27,6 +28,7 @@ import {
   type DevolucionCaja,
   type Emprendedor,
   type Entrada,
+  type IngresoEmprendedor,
   type LineaEntrada,
   type LineaVenta,
   type MovimientoEmprendedor,
@@ -71,11 +73,16 @@ function hoy(): string {
 // abono) o lo invalidan (importación, entradas, alta) para no desincronizar.
 let _catalogo: Producto[] | null = null;
 let _clientes: Cliente[] | null = null;
+// Cache del listado de emprendedores: se usa en /historial para enriquecer
+// los movimientos del collectionGroup con nombre/prefijo sin relistar la
+// colección en cada refresh. Invalidado por crear/editar/eliminar/activar.
+let _emprendedores: Emprendedor[] | null = null;
 
 // Al cambiar de negocio, el cache deja de ser válido: se descarta.
 onCambioNegocio(() => {
   _catalogo = null;
   _clientes = null;
+  _emprendedores = null;
 });
 
 function invalidarCatalogo(): void {
@@ -84,6 +91,10 @@ function invalidarCatalogo(): void {
 
 function invalidarClientes(): void {
   _clientes = null;
+}
+
+function invalidarEmprendedores(): void {
+  _emprendedores = null;
 }
 
 // Aplica cambios a un producto en el cache. Si no estaba (código nuevo),
@@ -538,6 +549,11 @@ async function registrarMovEmp(
   for (const k of Object.keys(limpio)) {
     if (limpio[k] === undefined) delete limpio[k];
   }
+  // Estampamos el negocioId para poder filtrar todas las bitácoras del tenant
+  // desde una sola query con collectionGroup("movimientos"). Sin este campo
+  // habría que escanear N emprendedores (una query cada uno) para armar el
+  // panel de "Ingresos del día" en /historial.
+  limpio.negocioId = getNegocioId();
   try {
     await addDoc(tcol(EMPRENDEDORES, empId, MOVIMIENTOS_EMP), limpio);
   } catch {
@@ -557,6 +573,106 @@ export async function movimientosDeEmprendedor(
   );
   const snap = await getDocs(q);
   return snap.docs.map((d) => d.data() as MovimientoEmprendedor);
+}
+
+// El campo `despues` de un producto_agregado se serializa como
+// "precio 1234 · stock 5" (con un opcional "· vence YYYY-MM-DD"). Esta
+// función extrae los dos números sin depender del orden ni del separador.
+function parseDespuesAlta(s: string | undefined): { precio: number; stock: number } {
+  const txt = s || "";
+  const precioM = txt.match(/precio\s+(-?\d+)/i);
+  const stockM = txt.match(/stock\s+(-?\d+)/i);
+  return {
+    precio: precioM ? Number(precioM[1]) : 0,
+    stock: stockM ? Number(stockM[1]) : 0,
+  };
+}
+
+// Lista los ingresos de stock que cargaron los emprendedores en un rango.
+// Estrategia: UNA query collectionGroup sobre todas las bitácoras
+// "movimientos" filtrando por negocioId + rango de tiempo. Esto evita el
+// patrón anterior de 1+N queries (listar + una por emprendedor), que
+// dispara muchas lecturas vacías en negocios con muchos emprendedores que
+// no cargaron nada hoy.
+//
+// Considera dos acciones como ingreso de stock:
+//   - producto_agregado: alta de un nuevo SKU (cantidad = stock inicial).
+//   - stock_cambiado con delta > 0: el emprendedor declaró "Recibí" más
+//     unidades. Si el delta es negativo (retiró) NO cuenta.
+//
+// Requisitos:
+//   - Cada doc en /negocios/{slug}/emprendedores/{id}/movimientos lleva
+//     campo negocioId (estampado en registrarMovEmp). Los docs anteriores
+//     a este cambio no lo tienen y por eso quedan excluidos del query —
+//     no afecta el caso "hoy" que es el principal del panel.
+//   - Las reglas de Firestore deben permitir lectura por collectionGroup
+//     en /{path=**}/movimientos.
+//   - Firestore creará un índice compuesto (negocioId asc, en asc/desc)
+//     la primera vez que se ejecute: el error trae el link directo.
+export async function ingresosDeEmprendedoresEnRango(
+  desde: number,
+  hasta: number
+): Promise<IngresoEmprendedor[]> {
+  const q = query(
+    collectionGroup(getDb(), MOVIMIENTOS_EMP),
+    where("negocioId", "==", getNegocioId()),
+    where("en", ">=", desde),
+    where("en", "<=", hasta),
+    orderBy("en", "desc")
+  );
+  const snap = await getDocs(q);
+
+  // Cache de emprendedores para enriquecer nombre/prefijo en cada fila sin
+  // tocar la red por cada doc. Si el ingreso pertenece a un emprendedor que
+  // ya no existe (eliminado), usamos el id del path como fallback.
+  const emps = await listarEmprendedores();
+  const empPorId = new Map(emps.map((e) => [e.id, e]));
+
+  const resultados: IngresoEmprendedor[] = [];
+  for (const d of snap.docs) {
+    const m = d.data() as MovimientoEmprendedor;
+    // El padre de la subcolección "movimientos" es el doc del emprendedor.
+    const empId = d.ref.parent.parent?.id || "";
+    const e = empPorId.get(empId);
+    const nombre = e?.nombre || "(emprendedor eliminado)";
+    const prefijo = e?.prefijo || "";
+
+    if (m.accion === "producto_agregado") {
+      const { precio, stock } = parseDespuesAlta(m.despues);
+      resultados.push({
+        en: m.en,
+        emprendedorId: empId,
+        emprendedorNombre: nombre,
+        emprendedorPrefijo: prefijo,
+        tipo: "alta",
+        codigo: m.codigo || "",
+        descripcion: m.descripcion || "",
+        cantidad: Math.max(0, stock),
+        precio,
+        por: m.por,
+        origen: m.origen,
+      });
+    } else if (m.accion === "stock_cambiado") {
+      const antes = Number(m.antes ?? 0);
+      const despues = Number(m.despues ?? 0);
+      const delta = despues - antes;
+      if (delta > 0) {
+        resultados.push({
+          en: m.en,
+          emprendedorId: empId,
+          emprendedorNombre: nombre,
+          emprendedorPrefijo: prefijo,
+          tipo: "reposicion",
+          codigo: m.codigo || "",
+          descripcion: m.descripcion || "",
+          cantidad: delta,
+          por: m.por,
+          origen: m.origen,
+        });
+      }
+    }
+  }
+  return resultados;
 }
 
 // ===== Emprendedores (consignación) =====
@@ -584,11 +700,13 @@ function nuevoToken(): string {
   return Math.random().toString(36).slice(2, 14);
 }
 
-export async function listarEmprendedores(): Promise<Emprendedor[]> {
+export async function listarEmprendedores(force = false): Promise<Emprendedor[]> {
+  if (_emprendedores && !force) return _emprendedores;
   const snap = await getDocs(tcol(EMPRENDEDORES));
-  return snap.docs
+  _emprendedores = snap.docs
     .map((d) => ({ id: d.id, ...(d.data() as Omit<Emprendedor, "id">) }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
+  return _emprendedores;
 }
 
 export async function crearEmprendedor(
@@ -618,6 +736,7 @@ export async function crearEmprendedor(
     creadoEn: Date.now(),
   };
   await setDoc(tdoc(EMPRENDEDORES, token), datos);
+  invalidarEmprendedores();
   await registrarMovEmp(token, {
     en: Date.now(),
     por: quien || "Admin",
@@ -652,6 +771,7 @@ export async function actualizarEmprendedor(
     datos.prefijo = pref;
   }
   await setDoc(tdoc(EMPRENDEDORES, id), datos, { merge: true });
+  invalidarEmprendedores();
 
   // Una entrada por campo realmente modificado: lo que NO cambió no se loguea.
   const ahora = Date.now();
@@ -682,6 +802,7 @@ export async function actualizarEmprendedor(
 // Elimina un emprendedor. Sus productos permanecen en el catálogo.
 export async function eliminarEmprendedor(id: string): Promise<void> {
   await deleteDoc(tdoc(EMPRENDEDORES, id));
+  invalidarEmprendedores();
 }
 
 // Marca un emprendedor como activo o inactivo. Inactivo: NO puede cargar más
@@ -693,6 +814,7 @@ export async function setEmprendedorActivo(
   quien = ""
 ): Promise<void> {
   await setDoc(tdoc(EMPRENDEDORES, id), { activo }, { merge: true });
+  invalidarEmprendedores();
   await registrarMovEmp(id, {
     en: Date.now(),
     por: quien || "Admin",
@@ -712,20 +834,67 @@ export async function getEmprendedorPorToken(
 
 // El emprendedor agrega un producto: se crea en el stock real con código único.
 // origen distingue si lo cargó el propio emprendedor (/alta) o un admin (POS).
+// codigo (opcional): si viene, se usa el código que el emprendedor escribió en
+// vez de auto-generar. Debe normalizar a `${prefijo}-...` y no chocar con un
+// código existente. Si encaja en el patrón `${prefijo}-NNNN` con N mayor al
+// productosCount actual, avanzamos el contador para que la auto-generación
+// futura no caiga sobre un código ya tomado manualmente.
 export async function agregarProductoEmprendedor(
   emp: Emprendedor,
-  datos: { descripcion: string; precio: number; costo?: number; stock?: number; vence?: string },
+  datos: { descripcion: string; precio: number; costo?: number; stock?: number; vence?: string; codigo?: string },
   origen: "emprendedor" | "admin" = "emprendedor",
   quien = ""
 ): Promise<string> {
   const db = getDb();
   const empRef = tdoc(EMPRENDEDORES, emp.id);
   const vence = (datos.vence || "").trim();
+  const codigoPedido = (datos.codigo || "").trim();
   const codigo = await runTransaction(db, async (tx) => {
     const s = await tx.get(empRef);
-    const n = (s.exists() ? (s.data().productosCount as number) || 0 : 0) + 1;
-    const cod = `${emp.prefijo}-${String(n).padStart(4, "0")}`;
-    tx.update(empRef, { productosCount: n });
+    const curCount = (s.exists() ? (s.data().productosCount as number) || 0 : 0);
+
+    let cod: string;
+    let nuevoCount = curCount;
+
+    if (codigoPedido) {
+      cod = normalizarCodigo(codigoPedido);
+      if (!cod.startsWith(`${emp.prefijo}-`)) {
+        throw new Error(
+          `El código debe empezar con "${emp.prefijo}-" (tu prefijo de emprendedor).`
+        );
+      }
+      // Conflict check: si ya existe un producto con ese código, no lo
+      // pisamos. tx.get dentro de la transacción garantiza atomicidad.
+      const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
+      if (snapProd.exists()) {
+        throw new Error(`Ya existe un producto con el código ${cod}.`);
+      }
+      // Si el código tiene formato canónico PREFIJO-NNNN, avanzamos el
+      // contador para no chocar después en auto-generación.
+      const m = cod.match(new RegExp(`^${emp.prefijo}-(\\d+)$`));
+      if (m) {
+        const n = Number(m[1]);
+        if (n > curCount) nuevoCount = n;
+      }
+    } else {
+      nuevoCount = curCount + 1;
+      cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
+      // Defensa: si por alguna razón el slot auto está tomado (porque alguien
+      // usó código manual igual al próximo numérico), avanzamos y reintentamos
+      // hasta encontrar un hueco. Cap a 50 iteraciones para evitar loops.
+      for (let i = 0; i < 50; i++) {
+        const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
+        if (!snapProd.exists()) break;
+        nuevoCount++;
+        cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
+        if (i === 49) throw new Error("No pude generar un código libre.");
+      }
+    }
+
+    if (nuevoCount !== curCount) {
+      tx.update(empRef, { productosCount: nuevoCount });
+    }
+
     const docProd: Record<string, unknown> = {
       codigo: cod,
       descripcion: datos.descripcion.trim(),

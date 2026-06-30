@@ -57,6 +57,12 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [precio, setPrecio] = useState(0);
   const [stock, setStock] = useState(1);
   const [vence, setVence] = useState("");
+  // Código personalizado opcional. Si queda vacío, el backend auto-genera
+  // PREFIJO-NNNN; si lo escribe, valida formato y unicidad. Se trackea
+  // `extrasEnSesion` para que el sugerido en placeholder avance localmente
+  // tras cada alta sin refetch del emprendedor.
+  const [codigoCustom, setCodigoCustom] = useState("");
+  const [extrasEnSesion, setExtrasEnSesion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -194,7 +200,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     try {
       const cod = await agregarProductoEmprendedor(
         emp,
-        { descripcion, precio, stock, vence },
+        { descripcion, precio, stock, vence, codigo: codigoCustom },
         "emprendedor",
         emp.nombre
       );
@@ -218,9 +224,17 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setPrecio(0);
       setStock(1);
       setVence("");
+      setCodigoCustom("");
+      setExtrasEnSesion((x) => x + 1);
       refrescarHistorial(emp.id);
-    } catch {
-      setMsg("No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.");
+    } catch (e) {
+      // Si el backend rechaza el código (formato incorrecto, ya existe),
+      // su mensaje sirve para que el emprendedor corrija sin perder el form.
+      setMsg(
+        e instanceof Error
+          ? `❌ ${e.message}`
+          : "No se pudo guardar. Revisa tu conexión e inténtalo de nuevo."
+      );
     } finally {
       setBusy(false);
     }
@@ -617,6 +631,30 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 placeholder="Sin vencimiento"
                 className="mt-1"
               />
+            </label>
+            {/* Código personalizado: opcional. Si lo dejan vacío se auto-
+                genera con el prefijo del emprendedor. Sugerimos el próximo
+                correlativo como placeholder. */}
+            <label className="block text-sm">
+              <span className="text-slate-600 font-medium">
+                Código <span className="text-slate-400 font-normal">(opcional)</span>
+              </span>
+              <input
+                value={codigoCustom}
+                onChange={(e) => setCodigoCustom(e.target.value.toUpperCase())}
+                placeholder={
+                  emp
+                    ? `Sugerido: ${emp.prefijo}-${String(
+                        (emp.productosCount || 0) + extrasEnSesion + 1
+                      ).padStart(4, "0")}`
+                    : ""
+                }
+                className="mt-1 w-full border rounded-lg px-3 py-2.5 font-mono uppercase"
+              />
+              <span className="block text-[11px] text-slate-500 mt-1">
+                Déjalo vacío para que se genere automáticamente. Si lo escribes,
+                debe empezar con <b className="font-mono">{emp?.prefijo}-</b>.
+              </span>
             </label>
             <button
               onClick={agregar}

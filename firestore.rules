@@ -32,6 +32,18 @@ service cloud.firestore {
       allow write: if esModerador();
     }
 
+    // ===== collectionGroup("movimientos") =====
+    // /historial usa una query de grupo sobre todas las subcolecciones
+    // "movimientos" (negocios/{n}/emprendedores/{e}/movimientos/*) para
+    // listar los ingresos del día en una sola lectura. Las reglas de grupo
+    // se evalúan en root: hay que repetir el permiso aquí aunque el path
+    // ya esté cubierto por el match anidado de negocios.
+    // La query siempre filtra where("negocioId","==",X), así que cada doc
+    // que retorna pertenece al tenant correcto.
+    match /{path=**}/movimientos/{movId} {
+      allow read: if signedIn();
+    }
+
     // ===== Negocios =====
     match /negocios/{negId} {
       // El documento del negocio guarda solo branding (no es secreto): lectura
