@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   History,
   Search,
@@ -440,9 +441,11 @@ export function HistorialScreen() {
                       : "No hubo ingresos ese día."}
                     {esHoyIng && (
                       <div className="mt-2 text-[11px] text-slate-400">
-                        Si acabás de cargar productos desde /alta, recargá esa pestaña
-                        con Ctrl+Shift+R y volvé a cargar uno: los productos viejos
-                        no tienen el campo <span className="font-mono">negocioId</span>.
+                        Si acabás de cargar productos desde /alta y no los ves acá,
+                        recargá esa pestaña con Ctrl+Shift+R y volvé a cargar uno:
+                        los movimientos anteriores al último deploy no tienen el
+                        campo <span className="font-mono">negocioId</span> y por eso
+                        quedan fuera de esta query.
                       </div>
                     )}
                   </td>
@@ -1181,8 +1184,14 @@ function ModalAnularVenta({
 }
 
 // ===== Modal de reimpresión de boleta =====
-// Reusa el componente Ticket (mismo formato que la venta original) y dispara
-// window.print(). El CSS global oculta todo menos #ticket al imprimir.
+// El Ticket vive DENTRO del Modal (para el preview) y también como PORTAL
+// pegado a <body> (para imprimir). Por qué doble: el wrapper del Modal tiene
+// `no-print` (display:none !important en @media print) — cualquier hijo suyo
+// se colapsa al imprimir. El portal escapa del subárbol del modal y por eso
+// #ticket sobrevive a la impresión.
+// El preview se renderiza SIN id="ticket" para no duplicar el id: solo la
+// copia impresa queda como #ticket. La copia impresa va envuelta en
+// .solo-impresion (hidden on screen, visible en print).
 
 function ModalImprimirBoleta({
   venta,
@@ -1191,16 +1200,65 @@ function ModalImprimirBoleta({
   venta: Venta | null;
   onCerrar: () => void;
 }) {
+  // El portal solo puede montarse en cliente (document existe). En SSR se
+  // omite; el preview del modal ya funciona sin portal.
+  const [enCliente, setEnCliente] = useState(false);
+  useEffect(() => {
+    setEnCliente(true);
+  }, []);
+
   return (
-    <Modal
-      abierto={!!venta}
-      onCerrar={onCerrar}
-      titulo={venta ? `Boleta · ${venta.nro}` : ""}
-      maxW="max-w-md"
-    >
-      {venta && (
-        <div className="space-y-3">
-          <div className="flex justify-center">
+    <>
+      <Modal
+        abierto={!!venta}
+        onCerrar={onCerrar}
+        titulo={venta ? `Boleta · ${venta.nro}` : ""}
+        maxW="max-w-md"
+      >
+        {venta && (
+          <div className="space-y-3">
+            <div className="flex justify-center">
+              <Ticket
+                id="ticket-preview"
+                nro={venta.nro}
+                fecha={venta.fecha}
+                cliente={venta.cliente || "Consumidor Final"}
+                items={venta.items}
+                total={venta.total}
+                vendedor={venta.vendedor}
+                medioPago={venta.medioPago}
+                codigoBoleta={venta.codigoBoleta}
+              />
+            </div>
+            <p className="text-xs text-slate-500 text-center">
+              La vista de arriba es lo que se enviará a la impresora. Al imprimir
+              sólo se imprime esta boleta (el resto de la pantalla queda fuera).
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={onCerrar}
+                className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100"
+              >
+                Cerrar
+              </button>
+              <button
+                onClick={() => {
+                  // rAF asegura que el portal ya está pintado antes de que el
+                  // navegador serialice el DOM para el diálogo de impresión.
+                  requestAnimationFrame(() => window.print());
+                }}
+                className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg px-4 py-2"
+              >
+                <Printer size={16} /> Imprimir
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {enCliente && venta &&
+        createPortal(
+          <div className="solo-impresion">
             <Ticket
               nro={venta.nro}
               fecha={venta.fecha}
@@ -1211,28 +1269,10 @@ function ModalImprimirBoleta({
               medioPago={venta.medioPago}
               codigoBoleta={venta.codigoBoleta}
             />
-          </div>
-          <p className="text-xs text-slate-500 text-center">
-            La vista de arriba es lo que se enviará a la impresora. Al imprimir
-            sólo se imprime esta boleta (el resto de la pantalla queda fuera).
-          </p>
-          <div className="flex items-center justify-end gap-2">
-            <button
-              onClick={onCerrar}
-              className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100"
-            >
-              Cerrar
-            </button>
-            <button
-              onClick={() => window.print()}
-              className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg px-4 py-2"
-            >
-              <Printer size={16} /> Imprimir
-            </button>
-          </div>
-        </div>
-      )}
-    </Modal>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

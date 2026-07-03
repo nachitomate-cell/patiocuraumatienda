@@ -18,13 +18,18 @@ interface Props {
   // Override de la config: la pantalla /boleta lo usa para mostrar el preview
   // en vivo de los cambios sin esperar al refresh del context.
   cfgOverride?: BoletaConfig;
+  // Id del contenedor. Por defecto "ticket" porque el CSS de @media print
+  // selecciona #ticket para mostrarlo solo. Se puede pasar otro id (o "") para
+  // renderizar una vista previa sin duplicar el id cuando existe otra copia
+  // real de impresión en la página (por ejemplo, el modal de reimpresión).
+  id?: string;
 }
 
 // Boleta térmica (80mm). Solo este bloque se imprime (ver globals.css).
 // Cada línea del header/footer depende de la config en negocios/{slug}.boleta.
 // Si la config no está definida (boleta antigua), se muestran los valores que
 // se mostraban antes (mostrar* === undefined → se trata como TRUE).
-export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago, codigoBoleta, cfgOverride }: Props) {
+export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago, codigoBoleta, cfgOverride, id = "ticket" }: Props) {
   const NEGOCIO = useNegocio();
   const cfg = cfgOverride ?? NEGOCIO.boleta ?? {};
   // Helper: TRUE si está activado o no está definido.
@@ -48,7 +53,7 @@ export function Ticket({ nro, fecha, cliente, items, total, vendedor, medioPago,
 
   return (
     <div
-      id="ticket"
+      {...(id ? { id } : {})}
       className="bg-white rounded-xl shadow p-4 text-[12px] leading-tight font-mono text-slate-900"
       style={{ width: "80mm", maxWidth: "100%" }}
     >
