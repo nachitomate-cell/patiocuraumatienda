@@ -11,6 +11,11 @@ export interface Producto {
   vence?: string;
   emprendedorId?: string;
   emprendedorNombre?: string;
+  // Soft delete: cuando true, el producto queda oculto en el catálogo POS y en
+  // "Mi inventario" del emprendedor, pero el doc se conserva para no romper
+  // ventas/devoluciones/movimientos históricos que lo referencian por código.
+  eliminado?: boolean;
+  eliminadoEn?: number; // epoch ms
 }
 
 // Emprendedor que deja productos en consignación.
@@ -102,6 +107,7 @@ export interface MovimientoFiado {
 // como subcolección hasta limpieza manual: no hay UI que los liste sin padre).
 export type AccionMovEmprendedor =
   | "producto_agregado"
+  | "producto_eliminado"
   | "precio_cambiado"
   | "stock_cambiado"
   | "descripcion_cambiada"

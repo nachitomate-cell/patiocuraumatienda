@@ -7,6 +7,7 @@ import {
   Check,
   PackageCheck,
   Pencil,
+  Trash2,
   X,
   ShoppingBag,
   Download,
@@ -16,6 +17,7 @@ import {
   Search,
   PackagePlus,
   PackageMinus,
+  AlertTriangle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -24,6 +26,7 @@ import {
   productosDeEmprendedor,
   ventasDeEmprendedor,
   actualizarProductoEmprendedor,
+  eliminarProductoEmprendedor,
   movimientosDeEmprendedor,
 } from "@/lib/repo";
 import {
@@ -38,6 +41,7 @@ import { useNegocio } from "@/lib/negocio-context";
 import { useAuth } from "@/lib/auth";
 import { HistorialMovs } from "@/components/HistorialMovs";
 import { SelectorFecha } from "@/components/SelectorFecha";
+import { Modal } from "@/components/Modal";
 import { estadoVence } from "@/lib/vence";
 
 export function AltaEmprendedorScreen({ token }: { token: string }) {
@@ -74,6 +78,12 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [edVence, setEdVence] = useState("");
   const [busyEdit, setBusyEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
+
+  // Eliminación de producto: guardamos el producto candidato para pasarlo al
+  // Modal de confirmación (evita window.confirm nativo).
+  const [eliminarObjetivo, setEliminarObjetivo] = useState<Producto | null>(null);
+  const [busyEliminar, setBusyEliminar] = useState(false);
+  const [eliminarErr, setEliminarErr] = useState("");
 
   // Buscador y ajuste rápido de stock (recibí / retiré).
   const [busqueda, setBusqueda] = useState("");
@@ -288,7 +298,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setQuickErr("");
     try {
       await actualizarProductoEmprendedor(
-        emp.id,
+        emp,
         p.codigo,
         { stockActual: nuevo },
         "emprendedor",
@@ -312,7 +322,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setEditErr("");
     try {
       await actualizarProductoEmprendedor(
-        emp.id,
+        emp,
         editCodigo,
         {
           descripcion: edDescripcion,
@@ -342,6 +352,39 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setEditErr(e instanceof Error ? e.message : "No se pudo guardar.");
     } finally {
       setBusyEdit(false);
+    }
+  }
+
+  // ===== Eliminación =====
+  // Confirma el soft-delete del producto en curso. El backend valida
+  // pertenencia (por emprendedorId o prefijo) y tira si no matchea; la UI se
+  // limita a actualizar el estado local optimista tras un OK.
+  async function confirmarEliminar() {
+    if (!emp || !eliminarObjetivo) return;
+    setBusyEliminar(true);
+    setEliminarErr("");
+    try {
+      await eliminarProductoEmprendedor(
+        emp,
+        eliminarObjetivo.codigo,
+        "emprendedor",
+        emp.nombre
+      );
+      const nombre = eliminarObjetivo.descripcion || eliminarObjetivo.codigo;
+      setProductos((prev) => prev.filter((p) => p.codigo !== eliminarObjetivo.codigo));
+      // Si el producto eliminado era el que estaba en edición o en quick-
+      // ajuste, cerramos esos paneles para no dejar UI colgando.
+      if (editCodigo === eliminarObjetivo.codigo) setEditCodigo(null);
+      if (quickCodigo === eliminarObjetivo.codigo) setQuickCodigo(null);
+      setEliminarObjetivo(null);
+      setMsg(`🗑️ "${nombre}" fue eliminado de tu inventario.`);
+      refrescarHistorial(emp.id);
+    } catch (e) {
+      setEliminarErr(
+        e instanceof Error ? e.message : "No se pudo eliminar el producto."
+      );
+    } finally {
+      setBusyEliminar(false);
     }
   }
 
@@ -831,6 +874,16 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                         >
                           <Pencil size={14} />
                         </button>
+                        <button
+                          onClick={() => {
+                            setEliminarErr("");
+                            setEliminarObjetivo(p);
+                          }}
+                          title="Eliminar producto del inventario"
+                          className="flex items-center gap-1 border border-red-300 text-red-700 hover:bg-red-50 rounded-lg px-2 py-1.5 text-xs"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </div>
                     {enQuick && (
@@ -970,6 +1023,62 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           {NEGOCIO.ubicacion && ` · ${NEGOCIO.ubicacion}`}
         </p>
       </main>
+
+      <Modal
+        abierto={!!eliminarObjetivo}
+        onCerrar={busyEliminar ? () => {} : () => setEliminarObjetivo(null)}
+        titulo={eliminarObjetivo ? `Eliminar · ${eliminarObjetivo.codigo}` : ""}
+        maxW="max-w-md"
+      >
+        {eliminarObjetivo && (
+          <div className="space-y-4">
+            <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg px-3 py-3 text-sm">
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle size={16} /> ¿Estás seguro de que deseas eliminar este producto del inventario?
+              </div>
+              <p className="mt-1 text-xs">
+                Esta acción no se puede deshacer. El producto dejará de aparecer
+                en tu inventario y en la caja del negocio. Las ventas anteriores
+                que lo incluyen se mantienen en el historial.
+              </p>
+            </div>
+
+            <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-1">
+              <div className="font-semibold text-slate-800 truncate">
+                {eliminarObjetivo.descripcion || "(sin descripción)"}
+              </div>
+              <div className="text-xs text-slate-500 font-mono">
+                {eliminarObjetivo.codigo} · {eliminarObjetivo.stockActual} u. ·{" "}
+                {money(eliminarObjetivo.precio)}
+              </div>
+            </div>
+
+            {eliminarErr && <p className="text-sm text-red-600">{eliminarErr}</p>}
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setEliminarObjetivo(null)}
+                disabled={busyEliminar}
+                className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarEliminar}
+                disabled={busyEliminar}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg px-4 py-2 disabled:opacity-50"
+              >
+                {busyEliminar ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Trash2 size={16} />
+                )}
+                Eliminar producto
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

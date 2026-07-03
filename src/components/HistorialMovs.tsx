@@ -1,6 +1,6 @@
 "use client";
 
-import { History, Plus, Pencil, Tag, Boxes, FileText, Hash, Power, PauseCircle, UserPlus, Barcode, DollarSign, CalendarClock } from "lucide-react";
+import { History, Plus, Pencil, Tag, Boxes, FileText, Hash, Power, PauseCircle, UserPlus, Barcode, DollarSign, CalendarClock, Trash2 } from "lucide-react";
 import type { AccionMovEmprendedor, MovimientoEmprendedor } from "@/lib/types";
 import { money } from "@/lib/format";
 
@@ -10,6 +10,7 @@ const PRESENT: Record<
   { Icon: typeof History; color: string; label: string }
 > = {
   producto_agregado: { Icon: Plus, color: "bg-emerald-100 text-emerald-700", label: "Producto agregado" },
+  producto_eliminado: { Icon: Trash2, color: "bg-red-100 text-red-700", label: "Producto eliminado" },
   precio_cambiado: { Icon: Tag, color: "bg-amber-100 text-amber-700", label: "Precio" },
   stock_cambiado: { Icon: Boxes, color: "bg-cyan-100 text-cyan-700", label: "Stock" },
   descripcion_cambiada: { Icon: FileText, color: "bg-slate-100 text-slate-700", label: "Descripción" },

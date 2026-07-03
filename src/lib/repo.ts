@@ -134,7 +134,8 @@ export async function getProducto(codigo: string): Promise<Producto | null> {
 }
 
 // Búsqueda para venta/escáner: primero por código interno (id del documento)
-// y, si no existe, por el campo código de barras (EAN/UPC).
+// y, si no existe, por el campo código de barras (EAN/UPC). Los productos
+// soft-deleted (`eliminado === true`) se ocultan: el cajero no puede tocarlos.
 export async function buscarParaVenta(valor: string): Promise<Producto | null> {
   const v = valor.trim();
   if (!v) return null;
@@ -144,10 +145,12 @@ export async function buscarParaVenta(valor: string): Promise<Producto | null> {
     if (enCache) return enCache;
   }
   const directo = await getProducto(v);
-  if (directo) return directo;
+  if (directo && !directo.eliminado) return directo;
   const q = query(tcol(PRODUCTOS), where("barcode", "==", v), limit(1));
   const snap = await getDocs(q);
-  return snap.empty ? null : (snap.docs[0].data() as Producto);
+  if (snap.empty) return null;
+  const p = snap.docs[0].data() as Producto;
+  return p.eliminado ? null : p;
 }
 
 // Busqueda por prefijo de codigo (usa el id del documento). Limitada para
@@ -164,16 +167,22 @@ export async function buscarProductos(term: string, max = 30): Promise<Producto[
     limit(max)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => d.data() as Producto);
+  return snap.docs
+    .map((d) => d.data() as Producto)
+    .filter((p) => !p.eliminado);
 }
 
 // Carga todo el catalogo (para el panel de inventario y el buscador de venta).
 // Se cachea en memoria: la primera vez lee la colección, luego se reutiliza
 // entre pantallas sin volver a leer. `force` fuerza una relectura (Refrescar).
+// Excluye productos soft-deleted (`eliminado === true`): las ventas históricas
+// siguen intactas pero el POS y el stock ya no los ven.
 export async function todosLosProductos(force = false): Promise<Producto[]> {
   if (_catalogo && !force) return _catalogo;
   const snap = await getDocs(tcol(PRODUCTOS));
-  _catalogo = snap.docs.map((d) => d.data() as Producto);
+  _catalogo = snap.docs
+    .map((d) => d.data() as Producto)
+    .filter((p) => !p.eliminado);
   return _catalogo;
 }
 
@@ -948,13 +957,69 @@ export async function productosDeEmprendedor(
   const map = new Map<string, Producto>();
   for (const d of porIdSnap.docs) {
     const p = d.data() as Producto;
+    if (p.eliminado) continue;
     map.set(p.codigo, p);
   }
   for (const d of porPrefijoSnap.docs) {
     const p = d.data() as Producto;
+    if (p.eliminado) continue;
     if (!map.has(p.codigo)) map.set(p.codigo, p);
   }
   return Array.from(map.values());
+}
+
+// Elimina un producto del catálogo del emprendedor (soft-delete). Valida que
+// el producto le pertenezca — por `emprendedorId` estampado o, para legacy sin
+// campo, por prefijo del código — antes de tocar Firestore. Si no matchea,
+// tira un error de "no autorizado" que la UI puede mostrar.
+//
+// Por qué soft-delete y no borrado físico: las ventas históricas referencian
+// el producto por `codigo` en cada línea. Aunque `LineaVenta` snapshottea
+// descripción/precio al momento de la venta, `productosDeEmprendedor` y las
+// consultas del historial siguen cruzando por código; hard-delete dejaría
+// referencias colgando y podría contarse doble si alguien recrea el código.
+// Marcar con `eliminado: true` mantiene consistencia y permite reactivar sin
+// perder el trabajo de estampado.
+export async function eliminarProductoEmprendedor(
+  emp: { id: string; prefijo: string },
+  codigo: string,
+  origen: "emprendedor" | "admin" = "emprendedor",
+  quien = ""
+): Promise<void> {
+  const empId = emp.id;
+  const cod = codigo.trim();
+  if (!cod) throw new Error("Falta el código del producto.");
+  const ref = tdoc(PRODUCTOS, cod);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("El producto no existe.");
+  const p = snap.data() as Producto;
+  if (p.eliminado) return; // ya está eliminado, no repetimos escritura ni log
+  const propioPorId = !!p.emprendedorId && p.emprendedorId === empId;
+  const propioPorPrefijo =
+    !p.emprendedorId && !!p.codigo && p.codigo.startsWith(`${emp.prefijo}-`);
+  if (!propioPorId && !propioPorPrefijo) {
+    throw new Error("No autorizado: este producto no te pertenece.");
+  }
+  const ahora = Date.now();
+  await setDoc(
+    ref,
+    { eliminado: true, eliminadoEn: ahora },
+    { merge: true }
+  );
+  // El producto ya no debe aparecer en el catálogo cacheado del POS.
+  if (_catalogo) {
+    _catalogo = _catalogo.filter((x) => x.codigo !== cod);
+  }
+  await registrarMovEmp(empId, {
+    en: ahora,
+    por: quien || (origen === "emprendedor" ? "Emprendedor" : "Admin"),
+    origen,
+    accion: "producto_eliminado",
+    codigo: cod,
+    descripcion: p.descripcion || "",
+    antes: `precio ${p.precio || 0} · stock ${p.stockActual || 0}`,
+    despues: "eliminado",
+  });
 }
 
 
@@ -963,23 +1028,38 @@ export async function productosDeEmprendedor(
 // al emprendedor: las reglas de Firestore aceptan escritura de cualquier
 // signedIn anónimo, así que esta verificación es defensa en profundidad
 // contra bugs de UI, no contra atacantes (un atacante con curl haría lo mismo).
+//
+// Doble criterio de propiedad (espeja `productosDeEmprendedor`): por
+// `emprendedorId` estampado, o para productos legacy (sin campo) por prefijo
+// del código. Cuando toca un legacy, aprovecha para estampar el campo y
+// curar la fila (backfill perezoso).
 export async function actualizarProductoEmprendedor(
-  empId: string,
+  emp: { id: string; prefijo: string; nombre?: string },
   codigo: string,
   cambios: { precio?: number; stockActual?: number; descripcion?: string; vence?: string },
   origen: "emprendedor" | "admin" = "emprendedor",
   quien = ""
 ): Promise<void> {
+  const empId = emp.id;
   const cod = codigo.trim();
   if (!cod) throw new Error("Falta el código del producto.");
   const ref = tdoc(PRODUCTOS, cod);
   const snap = await getDoc(ref);
   if (!snap.exists()) throw new Error("El producto no existe.");
   const p = snap.data() as Producto;
-  if (p.emprendedorId !== empId) {
+  const propioPorId = !!p.emprendedorId && p.emprendedorId === empId;
+  const propioPorPrefijo =
+    !p.emprendedorId && !!p.codigo && p.codigo.startsWith(`${emp.prefijo}-`);
+  if (!propioPorId && !propioPorPrefijo) {
     throw new Error("Este producto no pertenece a este emprendedor.");
   }
   const limpio: Record<string, unknown> = {};
+  if (propioPorPrefijo) {
+    // Estampa el vínculo para que la próxima edición matchee por campo
+    // directo y para que quede consistente con productos nuevos.
+    limpio.emprendedorId = empId;
+    if (emp.nombre) limpio.emprendedorNombre = emp.nombre;
+  }
   if (cambios.descripcion !== undefined) {
     const d = cambios.descripcion.trim();
     if (!d) throw new Error("La descripción no puede quedar vacía.");
