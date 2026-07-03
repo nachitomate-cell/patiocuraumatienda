@@ -18,6 +18,7 @@ type FiltroOrigen = "todos" | "admin" | "emprendedor";
 
 const ACCION_LABEL: Record<AccionMovEmprendedor, string> = {
   producto_agregado: "Productos agregados",
+  producto_eliminado: "Productos eliminados",
   precio_cambiado: "Cambios de precio",
   stock_cambiado: "Cambios de stock",
   descripcion_cambiada: "Cambios de descripción",
