@@ -33,13 +33,17 @@ import {
   ventasEnRango,
   devolucionesEnRango,
   actualizarCodigoBoleta,
+  actualizarMedioPago,
   ingresosDeEmprendedoresEnRango,
+  listarClientes,
 } from "@/lib/repo";
 import {
   subtotalLinea,
+  type Cliente,
   type Devolucion,
   type IngresoEmprendedor,
   type LineaVenta,
+  type MedioPago,
   type Venta,
 } from "@/lib/types";
 import { money, hoyISO } from "@/lib/format";
@@ -686,6 +690,7 @@ export function HistorialScreen() {
                 <FilaVenta
                   key={v.nro}
                   venta={v}
+                  vendedor={vendedor}
                   devoluciones={devolucionesPorVenta.get(v.nro) || []}
                   abierto={abierto}
                   onToggle={() => setAbierta(abierto ? null : v.nro)}
@@ -695,6 +700,20 @@ export function HistorialScreen() {
                   onCodigoBoletaActualizado={(codigo) =>
                     setVentas((prev) =>
                       prev.map((x) => (x.nro === v.nro ? { ...x, codigoBoleta: codigo } : x))
+                    )
+                  }
+                  onMedioPagoActualizado={(medio, cli) =>
+                    setVentas((prev) =>
+                      prev.map((x) =>
+                        x.nro === v.nro
+                          ? {
+                              ...x,
+                              medioPago: medio,
+                              clienteId: medio === "fiado" ? cli?.id : undefined,
+                              clienteNombre: medio === "fiado" ? cli?.nombre : undefined,
+                            }
+                          : x
+                      )
                     )
                   }
                 />
@@ -735,6 +754,7 @@ export function HistorialScreen() {
 
 function FilaVenta({
   venta: v,
+  vendedor,
   devoluciones,
   abierto,
   onToggle,
@@ -742,8 +762,10 @@ function FilaVenta({
   onImprimir,
   onAnular,
   onCodigoBoletaActualizado,
+  onMedioPagoActualizado,
 }: {
   venta: Venta;
+  vendedor: string;
   devoluciones: Devolucion[];
   abierto: boolean;
   onToggle: () => void;
@@ -751,6 +773,7 @@ function FilaVenta({
   onImprimir: () => void;
   onAnular: () => void;
   onCodigoBoletaActualizado: (codigo: string) => void;
+  onMedioPagoActualizado: (medio: MedioPago, cliente?: { id: string; nombre?: string }) => void;
 }) {
   // Estado local del editor inline para el código de boleta. Se re-syncea
   // cuando la venta cambia (ej. tras refrescar o tras guardar).
@@ -760,6 +783,50 @@ function FilaVenta({
   useEffect(() => {
     setEdCodBoleta(v.codigoBoleta || "");
   }, [v.codigoBoleta]);
+
+  // Editor de medio de pago: reversible mientras la venta no esté anulada y
+  // no tenga devoluciones (donde el "medio de pago original" ya se congeló).
+  const [edMedio, setEdMedio] = useState<MedioPago>(v.medioPago || "efectivo");
+  const [edClienteId, setEdClienteId] = useState<string>(v.clienteId || "");
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [cargandoClientes, setCargandoClientes] = useState(false);
+  const [guardandoMedio, setGuardandoMedio] = useState(false);
+  const [errMedio, setErrMedio] = useState("");
+  useEffect(() => {
+    setEdMedio(v.medioPago || "efectivo");
+    setEdClienteId(v.clienteId || "");
+  }, [v.medioPago, v.clienteId]);
+  // Carga la lista de clientes la primera vez que hace falta (al abrir el
+  // detalle o al elegir "fiado"), no en el mount para no listar en toda fila.
+  useEffect(() => {
+    if (!abierto) return;
+    if (clientes.length > 0 || cargandoClientes) return;
+    setCargandoClientes(true);
+    listarClientes()
+      .then((cs) => setClientes(cs))
+      .catch(() => setClientes([]))
+      .finally(() => setCargandoClientes(false));
+  }, [abierto, clientes.length, cargandoClientes]);
+
+  async function guardarMedioPago() {
+    setGuardandoMedio(true);
+    setErrMedio("");
+    try {
+      const cli =
+        edMedio === "fiado"
+          ? {
+              id: edClienteId,
+              nombre: clientes.find((c) => c.id === edClienteId)?.nombre || "",
+            }
+          : undefined;
+      await actualizarMedioPago(v, edMedio, vendedor || v.vendedor || "", cli);
+      onMedioPagoActualizado(edMedio, cli);
+    } catch (e) {
+      setErrMedio(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setGuardandoMedio(false);
+    }
+  }
 
   async function guardarCodigoBoleta() {
     const cod = edCodBoleta.trim();
@@ -938,6 +1005,68 @@ function FilaVenta({
                 <span className="text-red-600 text-[11px]">{errCodBoleta}</span>
               )}
             </div>
+
+            {/* Editor inline del medio de pago. Permite corregir un cobro mal
+                registrado. Se bloquea si la venta está anulada o tiene
+                devoluciones (donde el medio original ya se congeló). */}
+            {!anulada && devoluciones.length === 0 && (
+              <div className="mt-2 border-t border-slate-200 pt-2 flex items-center gap-2 text-xs flex-wrap">
+                <span className="text-slate-500 font-semibold">Medio de pago:</span>
+                <select
+                  value={edMedio}
+                  onChange={(e) => {
+                    e.stopPropagation();
+                    setEdMedio(e.target.value as MedioPago);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white"
+                >
+                  <option value="efectivo">Efectivo</option>
+                  <option value="debito">Débito</option>
+                  <option value="credito">Crédito</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="fiado">Fiado</option>
+                </select>
+                {edMedio === "fiado" && (
+                  <select
+                    value={edClienteId}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setEdClienteId(e.target.value);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    className="border border-slate-300 rounded-lg px-2 py-1 text-xs bg-white min-w-[160px]"
+                  >
+                    <option value="">
+                      {cargandoClientes ? "Cargando clientes…" : "Selecciona cliente…"}
+                    </option>
+                    {clientes.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {(edMedio !== (v.medioPago || "efectivo") ||
+                  (edMedio === "fiado" && edClienteId !== (v.clienteId || ""))) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      guardarMedioPago();
+                    }}
+                    disabled={
+                      guardandoMedio || (edMedio === "fiado" && !edClienteId)
+                    }
+                    className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-2.5 py-1 text-xs disabled:opacity-50"
+                  >
+                    {guardandoMedio ? "…" : "Guardar"}
+                  </button>
+                )}
+                {errMedio && (
+                  <span className="text-red-600 text-[11px]">{errMedio}</span>
+                )}
+              </div>
+            )}
 
             <div className="mt-2 flex items-center justify-between gap-2 text-xs">
               {v.vendedor && (

@@ -31,6 +31,7 @@ import {
   type IngresoEmprendedor,
   type LineaEntrada,
   type LineaVenta,
+  type MedioPago,
   type MovimientoEmprendedor,
   type MovimientoFiado,
   type Producto,
@@ -1160,6 +1161,83 @@ export async function actualizarCodigoBoleta(
 ): Promise<void> {
   const cod = (codigo || "").trim();
   await setDoc(tdoc(VENTAS, nro), { codigoBoleta: cod }, { merge: true });
+}
+
+// Cambia el medio de pago de una venta ya registrada (corrección de un
+// registro mal ingresado). Corre en un batch para mantener consistencia:
+//  - No permitido si la venta está anulada.
+//  - Efectivo ↔ no-efectivo: no toca la caja como documento — el cálculo
+//    del "efectivo esperado" se hace on-the-fly desde la colección VENTAS,
+//    así que la caja abierta refleja el cambio automáticamente.
+//  - fiado → otro: registra un abono por el total y baja el saldo del
+//    cliente original.
+//  - otro → fiado: exige un clienteId, deja un cargo y sube el saldo.
+//  - fiado → fiado con cliente distinto: abona al viejo y carga al nuevo.
+// vendedor queda anotado en el motivo del movimiento (auditoría).
+export async function actualizarMedioPago(
+  venta: Venta,
+  nuevoMedio: MedioPago,
+  vendedor: string,
+  nuevoCliente?: { id: string; nombre?: string },
+): Promise<void> {
+  if (venta.anulada) throw new Error("La venta está anulada: no se puede cambiar el medio de pago.");
+
+  const actual = venta.medioPago;
+  const clienteActualId = venta.clienteId || "";
+  const clienteNuevoId = nuevoCliente?.id || "";
+  if (actual === nuevoMedio && clienteActualId === clienteNuevoId) return;
+
+  if (nuevoMedio === "fiado" && !clienteNuevoId) {
+    throw new Error("Cambiar a fiado requiere seleccionar un cliente.");
+  }
+
+  const total = venta.total || 0;
+  const ahora = Date.now();
+  const db = getDb();
+  const batch = writeBatch(db);
+
+  // 1) Revertir la deuda del cliente original si venía de fiado.
+  if (actual === "fiado" && clienteActualId) {
+    batch.set(doc(tcol(CLIENTES, clienteActualId, "movimientos")), {
+      tipo: "abono",
+      monto: total,
+      fecha: hoy(),
+      ventaNro: venta.nro,
+      nota: `Cambio medio de pago ${venta.nro}: ${actual} → ${nuevoMedio}`,
+      creadoEn: ahora,
+    });
+    batch.update(tdoc(CLIENTES, clienteActualId), { saldo: increment(-total) });
+  }
+
+  // 2) Aplicar la deuda al cliente nuevo si el destino es fiado.
+  if (nuevoMedio === "fiado" && clienteNuevoId) {
+    batch.set(doc(tcol(CLIENTES, clienteNuevoId, "movimientos")), {
+      tipo: "cargo",
+      monto: total,
+      fecha: venta.fecha,
+      ventaNro: venta.nro,
+      nota: `Cambio medio de pago ${venta.nro}: ${actual} → fiado`,
+      creadoEn: ahora,
+    });
+    batch.update(tdoc(CLIENTES, clienteNuevoId), { saldo: increment(total) });
+  }
+
+  // 3) Actualizar el documento de la venta.
+  const updates: Record<string, unknown> = { medioPago: nuevoMedio };
+  if (nuevoMedio === "fiado") {
+    updates.clienteId = clienteNuevoId;
+    if (nuevoCliente?.nombre) updates.clienteNombre = nuevoCliente.nombre;
+  } else if (actual === "fiado") {
+    // Al salir de fiado limpiamos el vínculo con el cliente para que no aparezca
+    // como fiado en el detalle. Usamos "" porque Firestore rechaza undefined en
+    // un update parcial.
+    updates.clienteId = "";
+    updates.clienteNombre = "";
+  }
+  batch.update(tdoc(VENTAS, venta.nro), updates);
+
+  await batch.commit();
+  if (actual === "fiado" || nuevoMedio === "fiado") invalidarClientes();
 }
 
 export async function ultimasVentas(max = 20): Promise<Venta[]> {

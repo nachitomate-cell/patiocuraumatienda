@@ -79,12 +79,17 @@ export function EmprendedoresScreen() {
   }
 
   // Cantidad de productos del catálogo cuyo código empieza con cada prefijo.
+  // Defensivo: hay documentos legacy con `codigo` o `prefijo` faltantes que
+  // hacían crashear al toUpperCase (Cannot read properties of undefined).
   const conteoPorPrefijo = useMemo(() => {
     const m = new Map<string, number>();
     for (const p of productos) {
-      const cod = p.codigo.toUpperCase();
+      const cod = (p.codigo || "").toUpperCase();
+      if (!cod) continue;
       for (const e of lista) {
-        if (cod.startsWith(e.prefijo.toUpperCase())) {
+        const pref = (e.prefijo || "").toUpperCase();
+        if (!pref) continue;
+        if (cod.startsWith(pref)) {
           m.set(e.prefijo, (m.get(e.prefijo) ?? 0) + 1);
         }
       }
