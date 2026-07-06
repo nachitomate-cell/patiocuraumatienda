@@ -18,6 +18,7 @@ import {
   PackagePlus,
   PackageMinus,
   AlertTriangle,
+  Send,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -104,8 +105,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [ajusteBusy, setAjusteBusy] = useState(false);
   const [ajusteErr, setAjusteErr] = useState("");
   const [ajusteOk, setAjusteOk] = useState("");
+  // Contador de movimientos hechos en esta apertura de la modal. Cuando > 0
+  // aparece el CTA para enviar el reporte al administrador.
+  const [ajusteHechos, setAjusteHechos] = useState(0);
 
   const [descargando, setDescargando] = useState(false);
+  // "enviando" es visual solo: si estamos generando/compartiendo el Excel.
+  const [enviando, setEnviando] = useState(false);
+  const [enviarErr, setEnviarErr] = useState("");
 
   // Carga inicial: emprendedor + (si ok) sus productos y ventas.
   useEffect(() => {
@@ -301,6 +308,8 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setAjusteCantidad(1);
     setAjusteErr("");
     setAjusteOk("");
+    setAjusteHechos(0);
+    setEnviarErr("");
   }
 
   function cerrarAjuste() {
@@ -362,6 +371,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setAjusteProd(null);
       setAjusteBusqueda("");
       setAjusteCantidad(1);
+      setAjusteHechos((n) => n + 1);
       refrescarHistorial(emp.id);
     } catch (e) {
       setAjusteErr(e instanceof Error ? e.message : "No se pudo guardar.");
@@ -484,11 +494,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   //
   // Async: para "hoy" y "mes" fetcheamos las devoluciones del rango desde
   // Firestore (no viven en state). Movimientos ya están en `movs`.
-  async function descargarReporte(rango: "hoy" | "mes" | "todo") {
-    if (!emp) return;
-    setDescargando(true);
-    try {
-      const ahora = new Date();
+  //
+  // Devuelve el WorkBook + filename listo, para que tanto la descarga como el
+  // "Enviar al administrador" (Web Share) compartan la misma lógica de armado.
+  async function construirExcelReporte(
+    rango: "hoy" | "mes" | "todo"
+  ): Promise<{ wb: XLSX.WorkBook; filename: string; periodo: string } | null> {
+    if (!emp) return null;
+    const ahora = new Date();
       const inicioHoy = new Date(
         ahora.getFullYear(),
         ahora.getMonth(),
@@ -741,9 +754,68 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         .replace(/[̀-ͯ]/g, "")
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-|-$/g, "");
-      XLSX.writeFile(wb, `reporte_${slugEmp}_${rango}_${periodo}.xlsx`);
+      const filename = `reporte_${slugEmp}_${rango}_${periodo}.xlsx`;
+      return { wb, filename, periodo };
+  }
+
+  // Descarga el reporte del período como .xlsx en el dispositivo.
+  async function descargarReporte(rango: "hoy" | "mes" | "todo") {
+    setDescargando(true);
+    try {
+      const r = await construirExcelReporte(rango);
+      if (!r) return;
+      XLSX.writeFile(r.wb, r.filename);
     } finally {
       setDescargando(false);
+    }
+  }
+
+  // Envía el reporte al administrador usando la Web Share API (abre el share
+  // sheet nativo → WhatsApp/email/etc con el .xlsx adjunto). Si el navegador
+  // no soporta compartir archivos (Firefox desktop, Safari muy viejo), o el
+  // usuario cancela, cae a descarga clásica.
+  async function enviarReporte(rango: "hoy" | "mes" | "todo") {
+    if (!emp) return;
+    setEnviando(true);
+    setEnviarErr("");
+    try {
+      const r = await construirExcelReporte(rango);
+      if (!r) return;
+      const buf = XLSX.write(r.wb, { type: "array", bookType: "xlsx" });
+      const blob = new Blob([buf], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const file = new File([blob], r.filename, { type: blob.type });
+      const nav = typeof navigator !== "undefined" ? navigator : null;
+      const puedeShare =
+        !!nav &&
+        typeof nav.canShare === "function" &&
+        nav.canShare({ files: [file] });
+      if (puedeShare && typeof nav?.share === "function") {
+        try {
+          await nav.share({
+            files: [file],
+            title: `Reporte ${emp.nombre} · ${r.periodo}`,
+            text: `Reporte de ${emp.nombre} (${NEGOCIO.nombre || NEGOCIO.slug}) — período ${r.periodo}.`,
+          });
+          return;
+        } catch (e) {
+          // El usuario canceló el share sheet: no lo tratamos como error.
+          if ((e as { name?: string })?.name === "AbortError") return;
+          // Otro error: caemos a descarga.
+        }
+      }
+      // Fallback: descarga clásica.
+      XLSX.writeFile(r.wb, r.filename);
+      setEnviarErr(
+        "Este navegador no soporta compartir archivos directo. Descargué el Excel: adjuntalo a WhatsApp o email del administrador."
+      );
+    } catch (e) {
+      setEnviarErr(
+        e instanceof Error ? e.message : "No se pudo generar el reporte."
+      );
+    } finally {
+      setEnviando(false);
     }
   }
 
@@ -827,8 +899,22 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 {descargando ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                 Excel mensual
               </button>
+              <button
+                onClick={() => enviarReporte("hoy")}
+                disabled={enviando || cargandoDatos}
+                title="Enviar el Excel de hoy al administrador (WhatsApp / email)"
+                className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+              >
+                {enviando ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                Enviar hoy
+              </button>
             </div>
           </div>
+          {enviarErr && (
+            <p className="mt-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+              {enviarErr}
+            </p>
+          )}
 
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
             <Mini label="Productos" valor={productos.length.toString()} />
@@ -1493,6 +1579,32 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             )}
 
             {ajusteErr && <p className="text-sm text-red-600">{ajusteErr}</p>}
+            {enviarErr && (
+              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                {enviarErr}
+              </p>
+            )}
+
+            {/* CTA para enviar el reporte al administrador tras cualquier
+                movimiento hecho en esta apertura de la modal. Grande y arriba
+                de "Cerrar" para que sea el gesto siguiente natural. */}
+            {ajusteHechos > 0 && (
+              <button
+                onClick={() => enviarReporte("hoy")}
+                disabled={enviando}
+                className="w-full flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-lg py-3 disabled:opacity-50"
+              >
+                {enviando ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Send size={18} />
+                )}
+                Enviar reporte al administrador
+                <span className="text-[11px] font-normal opacity-90 ml-1">
+                  ({ajusteHechos} {ajusteHechos === 1 ? "movimiento" : "movimientos"})
+                </span>
+              </button>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
               <button
