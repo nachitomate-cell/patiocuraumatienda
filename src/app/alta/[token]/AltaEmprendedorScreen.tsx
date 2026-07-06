@@ -93,6 +93,16 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [busyQuick, setBusyQuick] = useState(false);
   const [quickErr, setQuickErr] = useState("");
 
+  // Modal grande "Ingreso" / "Retiro": buscador sobre el propio inventario para
+  // registrar movimientos rápidamente sin depender del scroll de la lista.
+  const [ajusteTipo, setAjusteTipo] = useState<"in" | "out" | null>(null);
+  const [ajusteBusqueda, setAjusteBusqueda] = useState("");
+  const [ajusteProd, setAjusteProd] = useState<Producto | null>(null);
+  const [ajusteCantidad, setAjusteCantidad] = useState(1);
+  const [ajusteBusy, setAjusteBusy] = useState(false);
+  const [ajusteErr, setAjusteErr] = useState("");
+  const [ajusteOk, setAjusteOk] = useState("");
+
   const [descargando, setDescargando] = useState(false);
 
   // Carga inicial: emprendedor + (si ok) sus productos y ventas.
@@ -279,6 +289,83 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setQuickCantidad(1);
     setQuickErr("");
     setEditCodigo(null);
+  }
+
+  // ===== Modal grande de Ingreso / Retiro con buscador =====
+  function abrirAjuste(tipo: "in" | "out") {
+    setAjusteTipo(tipo);
+    setAjusteBusqueda("");
+    setAjusteProd(null);
+    setAjusteCantidad(1);
+    setAjusteErr("");
+    setAjusteOk("");
+  }
+
+  function cerrarAjuste() {
+    if (ajusteBusy) return;
+    setAjusteTipo(null);
+    setAjusteProd(null);
+    setAjusteErr("");
+    setAjusteOk("");
+  }
+
+  const ajusteResultados = useMemo(() => {
+    const t = ajusteBusqueda.trim().toLowerCase();
+    if (!t) return productos.slice(0, 30);
+    return productos
+      .filter(
+        (p) =>
+          p.codigo.toLowerCase().includes(t) ||
+          (p.descripcion || "").toLowerCase().includes(t)
+      )
+      .slice(0, 30);
+  }, [productos, ajusteBusqueda]);
+
+  async function confirmarAjuste() {
+    if (!emp || !ajusteProd || !ajusteTipo) return;
+    const n = Math.max(0, Math.round(ajusteCantidad || 0));
+    if (n <= 0) {
+      setAjusteErr("Ingresa una cantidad mayor a 0.");
+      return;
+    }
+    const actual = ajusteProd.stockActual || 0;
+    const nuevo = ajusteTipo === "in" ? actual + n : actual - n;
+    if (nuevo < 0) {
+      setAjusteErr(`No puedes retirar ${n}: solo tienes ${actual} en stock.`);
+      return;
+    }
+    setAjusteBusy(true);
+    setAjusteErr("");
+    setAjusteOk("");
+    try {
+      await actualizarProductoEmprendedor(
+        emp,
+        ajusteProd.codigo,
+        { stockActual: nuevo },
+        "emprendedor",
+        emp.nombre
+      );
+      setProductos((prev) =>
+        prev.map((x) =>
+          x.codigo === ajusteProd.codigo ? { ...x, stockActual: nuevo } : x
+        )
+      );
+      setAjusteOk(
+        `${ajusteTipo === "in" ? "Ingreso" : "Retiro"} de ${n} u. de "${
+          ajusteProd.descripcion || ajusteProd.codigo
+        }" registrado. Quedan ${nuevo} u.`
+      );
+      // Deja la modal abierta para hacer varios ingresos/retiros seguidos:
+      // limpia el producto elegido y el buscador para el siguiente.
+      setAjusteProd(null);
+      setAjusteBusqueda("");
+      setAjusteCantidad(1);
+      refrescarHistorial(emp.id);
+    } catch (e) {
+      setAjusteErr(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setAjusteBusy(false);
+    }
   }
 
   async function confirmarQuick(p: Producto) {
@@ -625,6 +712,33 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
               <Mini label="Total" valor={money(totales.totalVendido)} />
             </div>
           </div>
+        </div>
+
+        {/* Accesos rápidos: Ingreso / Retiro con buscador propio.
+            Están arriba y grandes para que sean el primer gesto del turno
+            (repongo lo que traje / me llevo lo que sacaste), sin scrollear
+            hasta la lista. */}
+        <div className="grid grid-cols-2 gap-3 anim-in">
+          <button
+            onClick={() => abrirAjuste("in")}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow p-5 flex flex-col items-center justify-center gap-1.5 min-h-[92px]"
+          >
+            <PackagePlus size={30} />
+            <span className="text-lg leading-none">Ingreso</span>
+            <span className="text-[11px] font-normal opacity-90">
+              Sumar stock a un producto
+            </span>
+          </button>
+          <button
+            onClick={() => abrirAjuste("out")}
+            className="bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow p-5 flex flex-col items-center justify-center gap-1.5 min-h-[92px]"
+          >
+            <PackageMinus size={30} />
+            <span className="text-lg leading-none">Retiro</span>
+            <span className="text-[11px] font-normal opacity-90">
+              Restar stock de un producto
+            </span>
+          </button>
         </div>
 
         {/* Alta de producto */}
@@ -1075,6 +1189,197 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 )}
                 Eliminar producto
               </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Modal Ingreso / Retiro: buscador propio del inventario del
+          emprendedor + selector de cantidad. Deja abierto tras un OK para
+          registrar varios movimientos seguidos. */}
+      <Modal
+        abierto={ajusteTipo !== null}
+        onCerrar={cerrarAjuste}
+        titulo={
+          ajusteTipo === "in"
+            ? "Registrar ingreso de stock"
+            : ajusteTipo === "out"
+            ? "Registrar retiro de stock"
+            : ""
+        }
+        maxW="max-w-lg"
+      >
+        {ajusteTipo && (
+          <div className="space-y-3">
+            {ajusteOk && (
+              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg px-3 py-2 text-sm anim-pop">
+                {ajusteOk}
+              </div>
+            )}
+
+            {!ajusteProd ? (
+              <>
+                <div className="relative">
+                  <Search
+                    size={16}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  />
+                  <input
+                    autoFocus
+                    value={ajusteBusqueda}
+                    onChange={(e) => setAjusteBusqueda(e.target.value)}
+                    placeholder="Buscar en mi inventario…"
+                    className="w-full border rounded-lg pl-9 pr-9 py-2.5 text-sm"
+                  />
+                  {ajusteBusqueda && (
+                    <button
+                      type="button"
+                      onClick={() => setAjusteBusqueda("")}
+                      aria-label="Limpiar búsqueda"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="border rounded-lg divide-y max-h-72 overflow-y-auto">
+                  {ajusteResultados.length === 0 ? (
+                    <p className="text-slate-400 text-sm py-6 text-center">
+                      {productos.length === 0
+                        ? "Aún no tienes productos cargados."
+                        : `Ningún producto coincide con "${ajusteBusqueda}".`}
+                    </p>
+                  ) : (
+                    ajusteResultados.map((p) => (
+                      <button
+                        key={p.codigo}
+                        type="button"
+                        onClick={() => {
+                          setAjusteProd(p);
+                          setAjusteCantidad(1);
+                          setAjusteErr("");
+                          setAjusteOk("");
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-50 focus:bg-slate-50 outline-none"
+                      >
+                        <div className="font-medium text-slate-800 truncate text-sm">
+                          {p.descripcion || "(sin descripción)"}
+                        </div>
+                        <div className="text-xs text-slate-500 flex gap-x-2 flex-wrap">
+                          <span className="font-mono">{p.codigo}</span>
+                          <span>· {p.stockActual || 0} u.</span>
+                          <span>· {money(p.precio)}</span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-slate-50 rounded-lg p-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium text-slate-800 truncate">
+                      {ajusteProd.descripcion || "(sin descripción)"}
+                    </div>
+                    <div className="text-xs text-slate-500 flex gap-x-2 flex-wrap">
+                      <span className="font-mono">{ajusteProd.codigo}</span>
+                      <span>· Stock actual {ajusteProd.stockActual || 0} u.</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAjusteProd(null);
+                      setAjusteErr("");
+                    }}
+                    className="text-xs text-slate-500 hover:text-slate-800 underline shrink-0"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+
+                <label className="block text-sm">
+                  <span className="text-slate-600 font-medium">
+                    Cantidad a {ajusteTipo === "in" ? "ingresar" : "retirar"}
+                  </span>
+                  <div className="mt-1 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAjusteCantidad((c) => Math.max(1, (c || 0) - 1))
+                      }
+                      className="w-10 h-10 rounded-lg border border-slate-300 hover:bg-slate-100 flex items-center justify-center"
+                    >
+                      <PackageMinus size={16} />
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      inputMode="numeric"
+                      value={ajusteCantidad || ""}
+                      onChange={(e) =>
+                        setAjusteCantidad(Number(e.target.value) || 0)
+                      }
+                      className="flex-1 border rounded-lg px-3 py-2.5 text-center text-lg font-semibold"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAjusteCantidad((c) => Math.max(1, (c || 0) + 1))
+                      }
+                      className="w-10 h-10 rounded-lg border border-slate-300 hover:bg-slate-100 flex items-center justify-center"
+                    >
+                      <PackagePlus size={16} />
+                    </button>
+                  </div>
+                </label>
+
+                <div className="text-xs text-slate-500">
+                  Quedará{" "}
+                  <b className="text-slate-800">
+                    {Math.max(
+                      0,
+                      (ajusteProd.stockActual || 0) +
+                        (ajusteTipo === "in" ? ajusteCantidad : -ajusteCantidad)
+                    )}{" "}
+                    u.
+                  </b>{" "}
+                  después del {ajusteTipo === "in" ? "ingreso" : "retiro"}.
+                </div>
+              </div>
+            )}
+
+            {ajusteErr && <p className="text-sm text-red-600">{ajusteErr}</p>}
+
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100">
+              <button
+                onClick={cerrarAjuste}
+                disabled={ajusteBusy}
+                className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Cerrar
+              </button>
+              {ajusteProd && (
+                <button
+                  onClick={confirmarAjuste}
+                  disabled={ajusteBusy}
+                  className={`flex items-center gap-2 text-white font-semibold rounded-lg px-4 py-2 disabled:opacity-50 ${
+                    ajusteTipo === "in"
+                      ? "bg-emerald-600 hover:bg-emerald-700"
+                      : "bg-amber-600 hover:bg-amber-700"
+                  }`}
+                >
+                  {ajusteBusy ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : ajusteTipo === "in" ? (
+                    <PackagePlus size={16} />
+                  ) : (
+                    <PackageMinus size={16} />
+                  )}
+                  Confirmar {ajusteTipo === "in" ? "ingreso" : "retiro"}
+                </button>
+              )}
             </div>
           </div>
         )}
