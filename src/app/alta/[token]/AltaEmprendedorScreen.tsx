@@ -28,9 +28,11 @@ import {
   actualizarProductoEmprendedor,
   eliminarProductoEmprendedor,
   movimientosDeEmprendedor,
+  devolucionesEnRango,
 } from "@/lib/repo";
 import {
   subtotalLinea,
+  type Devolucion,
   type Emprendedor,
   type MovimientoEmprendedor,
   type Producto,
@@ -479,7 +481,10 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   // rango: "hoy" = solo ventas del día actual; "mes" = del mes en curso;
   // "todo" = histórico cargado en memoria. Productos siempre se incluyen
   // completos (filtrar el catálogo por ventas del rango no aporta).
-  function descargarReporte(rango: "hoy" | "mes" | "todo") {
+  //
+  // Async: para "hoy" y "mes" fetcheamos las devoluciones del rango desde
+  // Firestore (no viven en state). Movimientos ya están en `movs`.
+  async function descargarReporte(rango: "hoy" | "mes" | "todo") {
     if (!emp) return;
     setDescargando(true);
     try {
@@ -490,36 +495,82 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         ahora.getDate()
       ).getTime();
       const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).getTime();
-      const ventasRango = ventas.filter((v) => {
-        if (rango === "hoy") return v.creadoEn >= inicioHoy;
-        if (rango === "mes") return v.creadoEn >= inicioMes;
-        return true;
-      });
+      const inicioRango =
+        rango === "hoy" ? inicioHoy : rango === "mes" ? inicioMes : 0;
+      const finRango = Date.now();
 
-      // Stats por código limitadas al rango: el catálogo muestra "unidades
-      // vendidas" e "ingresos generados" del mismo período del reporte.
-      const statsRango = new Map<string, { unidades: number; total: number }>();
+      const ventasRango = ventas.filter((v) => v.creadoEn >= inicioRango);
+
+      // Devoluciones del rango: se filtran a las que tocan códigos del
+      // emprendedor (por emprendedorId estampado o por prefijo). Failsafe:
+      // si la consulta falla, seguimos con el resto del Excel.
+      let devsRango: Devolucion[] = [];
+      try {
+        const todas = await devolucionesEnRango(inicioRango, finRango);
+        devsRango = todas
+          .map((d) => ({
+            ...d,
+            items: d.items.filter(
+              (l) =>
+                l.emprendedorId === emp.id ||
+                (!!l.codigo && l.codigo.startsWith(emp.prefijo + "-"))
+            ),
+          }))
+          .filter((d) => d.items.length > 0);
+      } catch {
+        // Silencioso: el Excel se genera igual sin la hoja Devoluciones.
+      }
+
+      // Movimientos de stock del emprendedor (bitácora) filtrados al rango.
+      const movsRango = movs.filter((m) => m.en >= inicioRango);
+
+      // Stats por código: unidades y $ vendidos + devueltos (para neto).
+      const statsRango = new Map<
+        string,
+        { unidades: number; total: number; devueltas: number; devTotal: number }
+      >();
       for (const v of ventasRango) {
         if (v.anulada) continue;
         for (const l of v.items) {
           const k = l.codigo || "(manual)";
-          const acc = statsRango.get(k) || { unidades: 0, total: 0 };
+          const acc =
+            statsRango.get(k) ||
+            { unidades: 0, total: 0, devueltas: 0, devTotal: 0 };
           acc.unidades += l.cantidad;
           acc.total += subtotalLinea(l);
           statsRango.set(k, acc);
         }
       }
+      for (const d of devsRango) {
+        for (const l of d.items) {
+          const k = l.codigo || "(manual)";
+          const acc =
+            statsRango.get(k) ||
+            { unidades: 0, total: 0, devueltas: 0, devTotal: 0 };
+          acc.devueltas += l.cantidad;
+          acc.devTotal += subtotalLinea(l);
+          statsRango.set(k, acc);
+        }
+      }
 
       const productosRows = productos.map((p) => {
-        const stats = statsRango.get(p.codigo) || { unidades: 0, total: 0 };
+        const stats =
+          statsRango.get(p.codigo) ||
+          { unidades: 0, total: 0, devueltas: 0, devTotal: 0 };
+        const ev = estadoVence(p.vence);
         return {
           Codigo: p.codigo,
           Descripcion: p.descripcion,
           "Precio actual": p.precio,
           "Stock actual": p.stockActual,
+          Agotado: (p.stockActual || 0) === 0 ? "Sí" : "",
           Vence: p.vence || "",
+          "Estado vencimiento": ev ? ev.label : "",
           "Unidades vendidas": stats.unidades,
           "Ingresos generados": stats.total,
+          "Unidades devueltas": stats.devueltas,
+          "Devuelto ($)": stats.devTotal,
+          "Ingresos netos": stats.total - stats.devTotal,
         };
       });
 
@@ -532,6 +583,9 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             minute: "2-digit",
           }),
           Anulada: v.anulada ? "Sí" : "",
+          Vendedor: v.vendedor ?? "",
+          "Medio de pago": v.medioPago ?? "",
+          Cliente: v.medioPago === "fiado" ? (v.clienteNombre ?? "") : "",
           Codigo: l.codigo,
           Descripcion: l.descripcion,
           Cantidad: l.cantidad,
@@ -541,19 +595,83 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         }))
       );
 
-      // Totales recalculados sobre el rango (no usa `totales` global, que
-      // representa el histórico completo).
+      const devolucionesRows = devsRango.flatMap((d) =>
+        d.items.map((l) => ({
+          "Nro devolución": d.nro,
+          "Nro venta": d.ventaNro,
+          Fecha: d.fecha,
+          Hora: new Date(d.creadoEn).toLocaleTimeString("es-CL", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          Vendedor: d.vendedor ?? "",
+          "Medio original": d.medioPagoOriginal,
+          Motivo: d.motivo,
+          Codigo: l.codigo,
+          Descripcion: l.descripcion,
+          Cantidad: l.cantidad,
+          "Valor unidad": l.precio,
+          "Dscto%": l.descuento,
+          Subtotal: subtotalLinea(l),
+        }))
+      );
+
+      // Bitácora: incluye altas / eliminaciones / cambios de stock, precio,
+      // descripción, etc. Delta se calcula cuando aplica (numérico).
+      const movsRows = movsRango.map((m) => {
+        const antesN = Number(m.antes);
+        const despuesN = Number(m.despues);
+        const numeric =
+          m.accion === "producto_agregado" ||
+          m.accion === "stock_cambiado" ||
+          m.accion === "precio_cambiado" ||
+          m.accion === "costo_cambiado";
+        const delta =
+          m.accion === "producto_agregado"
+            ? Number(m.despues || 0)
+            : numeric && !Number.isNaN(antesN) && !Number.isNaN(despuesN)
+            ? despuesN - antesN
+            : "";
+        return {
+          Fecha: new Date(m.en).toLocaleDateString("es-CL"),
+          Hora: new Date(m.en).toLocaleTimeString("es-CL", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          Acción: m.accion,
+          Codigo: m.codigo ?? "",
+          Producto: m.descripcion ?? "",
+          Antes: m.antes ?? "",
+          Despues: m.despues ?? "",
+          Delta: delta,
+          Origen: m.origen,
+          Por: m.por,
+        };
+      });
+
+      // Totales del rango. Bruto = solo ventas no anuladas.
+      // Neto = Bruto − Devuelto − Anulado.
       let unidadesR = 0;
-      let totalR = 0;
+      let brutoR = 0;
       let nVentasR = 0;
+      let nAnuladas = 0;
+      let totalAnulado = 0;
       for (const v of ventasRango) {
-        if (v.anulada) continue;
-        nVentasR++;
-        for (const l of v.items) {
-          unidadesR += l.cantidad;
-          totalR += subtotalLinea(l);
+        const subtotalV = v.items.reduce((s, l) => s + subtotalLinea(l), 0);
+        if (v.anulada) {
+          nAnuladas++;
+          totalAnulado += subtotalV;
+          continue;
         }
+        nVentasR++;
+        for (const l of v.items) unidadesR += l.cantidad;
+        brutoR += subtotalV;
       }
+      const totalDevs = devsRango.reduce(
+        (s, d) => s + d.items.reduce((ss, l) => ss + subtotalLinea(l), 0),
+        0
+      );
+      const netoR = brutoR - totalDevs - totalAnulado;
 
       const periodo =
         rango === "hoy"
@@ -572,7 +690,13 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           "Stock total (unidades)": totales.stockTotal,
           "Ventas en el período (no anuladas)": nVentasR,
           "Unidades vendidas en el período": unidadesR,
-          "Total ingresado en el período": totalR,
+          "Total bruto": brutoR,
+          "Anuladas (N°)": nAnuladas,
+          "Total anulado": totalAnulado,
+          "Devoluciones (N°)": devsRango.length,
+          "Total devuelto": totalDevs,
+          "Total neto": netoR,
+          "Movimientos de stock": movsRango.length,
         },
       ];
 
@@ -591,6 +715,24 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           ventasRows.length ? ventasRows : [{ Aviso: "Sin ventas registradas" }]
         ),
         "Ventas"
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          devolucionesRows.length
+            ? devolucionesRows
+            : [{ Aviso: "Sin devoluciones en el período" }]
+        ),
+        "Devoluciones"
+      );
+      XLSX.utils.book_append_sheet(
+        wb,
+        XLSX.utils.json_to_sheet(
+          movsRows.length
+            ? movsRows
+            : [{ Aviso: "Sin movimientos de stock en el período" }]
+        ),
+        "Movimientos"
       );
 
       const slugEmp = (emp.nombre || emp.prefijo)
