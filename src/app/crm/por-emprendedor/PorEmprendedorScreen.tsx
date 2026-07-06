@@ -36,7 +36,8 @@ const MESES = [
 // históricas anteriores al snapshot).
 function agregarPorEmprendedor(
   ventas: Venta[],
-  porCodigo: Map<string, Producto>
+  porCodigo: Map<string, Producto>,
+  emprendedores: Emprendedor[]
 ): Map<string, { nombre: string; monto: number; unidades: number; nVentas: Set<string> }> {
   const out = new Map<
     string,
@@ -45,7 +46,7 @@ function agregarPorEmprendedor(
   const SIN = "__sin__";
   for (const v of ventas) {
     for (const l of v.items) {
-      const { id, nombre } = resolverEmp(l, porCodigo);
+      const { id, nombre } = resolverEmp(l, porCodigo, emprendedores);
       const key = id ?? SIN;
       const sub = subtotalLinea(l);
       const cur = out.get(key) ?? { nombre, monto: 0, unidades: 0, nVentas: new Set<string>() };
@@ -60,11 +61,22 @@ function agregarPorEmprendedor(
 
 function resolverEmp(
   l: LineaVenta,
-  porCodigo: Map<string, Producto>
+  porCodigo: Map<string, Producto>,
+  emprendedores: Emprendedor[]
 ): { id: string | null; nombre: string } {
   if (l.emprendedorId) return { id: l.emprendedorId, nombre: l.emprendedorNombre ?? l.emprendedorId };
   const p = porCodigo.get(l.codigo);
   if (p?.emprendedorId) return { id: p.emprendedorId, nombre: p.emprendedorNombre ?? p.emprendedorId };
+  // Legacy: productos sin emprendedorId estampado se atribuyen por prefijo del
+  // código contra la lista de emprendedores (mismo criterio de propiedad que
+  // productosDeEmprendedor en repo.ts).
+  if (l.codigo) {
+    for (const e of emprendedores) {
+      if (e.prefijo && l.codigo.startsWith(`${e.prefijo}-`)) {
+        return { id: e.id, nombre: e.nombre };
+      }
+    }
+  }
   return { id: null, nombre: "Sin emprendedor" };
 }
 
@@ -157,9 +169,9 @@ export function PorEmprendedorScreen() {
 
   // Calcula filas: cada emprendedor con monto del mes, mes anterior, año y delta.
   const filas = useMemo(() => {
-    const A = agregarPorEmprendedor(ventasMes, porCodigo);
-    const B = agregarPorEmprendedor(ventasPrev, porCodigo);
-    const C = agregarPorEmprendedor(ventasAnio, porCodigo);
+    const A = agregarPorEmprendedor(ventasMes, porCodigo, emprendedores);
+    const B = agregarPorEmprendedor(ventasPrev, porCodigo, emprendedores);
+    const C = agregarPorEmprendedor(ventasAnio, porCodigo, emprendedores);
 
     // Unión de IDs (incluye emprendedores listados aunque sin ventas).
     const ids = new Set<string>([...A.keys(), ...B.keys(), ...C.keys()]);
@@ -227,7 +239,7 @@ export function PorEmprendedorScreen() {
     setErrDia("");
     try {
       const vDia = await ventasEnRango(inicioDia(fechaDia), finDia(fechaDia));
-      const agg = agregarPorEmprendedor(vDia, porCodigo);
+      const agg = agregarPorEmprendedor(vDia, porCodigo, emprendedores);
       const nombreDe = (id: string): string => {
         if (id === "__sin__") return "Sin emprendedor";
         const e = emprendedores.find((x) => x.id === id);
