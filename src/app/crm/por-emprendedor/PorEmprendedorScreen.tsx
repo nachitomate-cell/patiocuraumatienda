@@ -80,6 +80,47 @@ function resolverEmp(
   return { id: null, nombre: "Sin emprendedor" };
 }
 
+// Desglose de las líneas que caen en "Sin emprendedor" agrupadas por código
+// (o por descripción para líneas manuales sin código). Se usa para el modal
+// de diagnóstico: permite ver si son ventas ad-hoc legítimas, productos legacy
+// con código raro o un prefijo que faltó estampar en algún emprendedor.
+type LineaSinEmp = {
+  codigo: string;
+  descripcion: string;
+  manual: boolean;
+  monto: number;
+  unidades: number;
+  nVentas: Set<string>;
+};
+
+function desgloseSinEmp(
+  ventas: Venta[],
+  porCodigo: Map<string, Producto>,
+  emprendedores: Emprendedor[]
+): LineaSinEmp[] {
+  const out = new Map<string, LineaSinEmp>();
+  for (const v of ventas) {
+    for (const l of v.items) {
+      const { id } = resolverEmp(l, porCodigo, emprendedores);
+      if (id !== null) continue;
+      const key = l.codigo ? l.codigo : `__manual__::${l.descripcion}`;
+      const cur = out.get(key) ?? {
+        codigo: l.codigo || "",
+        descripcion: l.descripcion || "",
+        manual: !!l.manual,
+        monto: 0,
+        unidades: 0,
+        nVentas: new Set<string>(),
+      };
+      cur.monto += subtotalLinea(l);
+      cur.unidades += l.cantidad;
+      cur.nVentas.add(v.nro);
+      out.set(key, cur);
+    }
+  }
+  return Array.from(out.values()).sort((a, b) => b.monto - a.monto);
+}
+
 // Inicio del mes (00:00:00) y fin del mes (23:59:59.999) según índice (0..11).
 function inicioMes(y: number, mIdx: number): number {
   return new Date(y, mIdx, 1, 0, 0, 0, 0).getTime();
@@ -125,6 +166,8 @@ export function PorEmprendedorScreen() {
   const [fechaDia, setFechaDia] = useState<string>(hoyIso);
   const [expDia, setExpDia] = useState(false);
   const [errDia, setErrDia] = useState("");
+
+  const [dlgSinEmp, setDlgSinEmp] = useState(false);
 
   const porCodigo = useMemo(() => {
     const m = new Map<string, Producto>();
@@ -210,6 +253,12 @@ export function PorEmprendedorScreen() {
   const totalPrev = filas.reduce((s, f) => s + f.prevMonto, 0);
   const deltaTotal = totalPrev > 0 ? ((totalMes - totalPrev) / totalPrev) * 100 : 0;
 
+  const desgloseSinEmpMes = useMemo(
+    () => desgloseSinEmp(ventasMes, porCodigo, emprendedores),
+    [ventasMes, porCodigo, emprendedores]
+  );
+  const totalSinEmpMes = desgloseSinEmpMes.reduce((s, x) => s + x.monto, 0);
+
   function navegar(dir: -1 | 1) {
     const nuevo = new Date(year, mes + dir, 1);
     setYear(nuevo.getFullYear());
@@ -231,6 +280,26 @@ export function PorEmprendedorScreen() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `${MESES[mes]} ${year}`);
     XLSX.writeFile(wb, `ventas_por_emprendedor_${NEGOCIO.slug}_${year}-${String(mes + 1).padStart(2, "0")}.xlsx`);
+  }
+
+  function exportarSinEmp() {
+    if (desgloseSinEmpMes.length === 0) return;
+    const filasXls = desgloseSinEmpMes.map((x) => ({
+      Código: x.codigo || "(manual)",
+      Descripción: x.descripcion || "",
+      Manual: x.manual ? "Sí" : "No",
+      "Ventas (n°)": x.nVentas.size,
+      Unidades: x.unidades,
+      Monto: x.monto,
+      "% del sin": totalSinEmpMes > 0 ? Number(((x.monto / totalSinEmpMes) * 100).toFixed(1)) : 0,
+    }));
+    const ws = XLSX.utils.json_to_sheet(filasXls);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `sin_emp ${MESES[mes]} ${year}`.slice(0, 31));
+    XLSX.writeFile(
+      wb,
+      `sin_emprendedor_${NEGOCIO.slug}_${year}-${String(mes + 1).padStart(2, "0")}.xlsx`
+    );
   }
 
   async function exportarDia() {
@@ -393,9 +462,29 @@ export function PorEmprendedorScreen() {
               <tbody className="divide-y divide-slate-100">
                 {filas.map((f) => {
                   const pct = totalMes > 0 ? (f.mesMonto / totalMes) * 100 : 0;
+                  const esSin = f.id === "__sin__";
+                  const clickeable = esSin && f.mesMonto > 0;
                   return (
-                    <tr key={f.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-2 font-medium text-slate-800">{f.nombre}</td>
+                    <tr
+                      key={f.id}
+                      className={`hover:bg-slate-50 ${clickeable ? "cursor-pointer" : ""}`}
+                      onClick={clickeable ? () => setDlgSinEmp(true) : undefined}
+                      title={clickeable ? "Ver desglose de líneas sin emprendedor" : undefined}
+                    >
+                      <td className="px-4 py-2 font-medium text-slate-800">
+                        {esSin ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            {f.nombre}
+                            {clickeable && (
+                              <span className="text-[10px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5 bg-amber-100 text-amber-700">
+                                ver detalle
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          f.nombre
+                        )}
+                      </td>
                       <td className="px-4 py-2 text-right tabular-nums font-semibold text-slate-800">
                         {money(f.mesMonto)}
                       </td>
@@ -476,6 +565,84 @@ export function PorEmprendedorScreen() {
               Exportar
             </button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        abierto={dlgSinEmp}
+        onCerrar={() => setDlgSinEmp(false)}
+        titulo={`Sin emprendedor — ${MESES[mes]} ${year}`}
+        maxW="max-w-3xl"
+      >
+        <div className="space-y-3">
+          <div className="text-sm text-slate-600">
+            Estas son las líneas que no se pudieron atribuir a ningún emprendedor (ni por snapshot, ni por catálogo, ni por prefijo de código). Revisa si son ventas manuales legítimas, productos legacy con código raro o un prefijo que falta estampar en algún emprendedor.
+          </div>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm text-slate-700">
+              Total: <span className="font-bold text-slate-900">{money(totalSinEmpMes)}</span>
+              <span className="text-slate-500"> · {desgloseSinEmpMes.length} ítem(s)</span>
+            </div>
+            <button
+              onClick={exportarSinEmp}
+              disabled={desgloseSinEmpMes.length === 0}
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50"
+            >
+              <Download size={16} /> Excel desglose
+            </button>
+          </div>
+          {desgloseSinEmpMes.length === 0 ? (
+            <div className="p-6 text-center text-slate-400 border border-dashed border-slate-200 rounded-lg">
+              Sin líneas atribuidas a "Sin emprendedor" este mes.
+            </div>
+          ) : (
+            <div className="max-h-[60vh] overflow-auto border border-slate-200 rounded-lg">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-slate-600 sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold">Código</th>
+                    <th className="px-3 py-2 text-left font-semibold">Descripción</th>
+                    <th className="px-3 py-2 text-right font-semibold">Ventas</th>
+                    <th className="px-3 py-2 text-right font-semibold">Unid.</th>
+                    <th className="px-3 py-2 text-right font-semibold">Monto</th>
+                    <th className="px-3 py-2 text-right font-semibold">% del sin</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {desgloseSinEmpMes.map((x, i) => {
+                    const pct = totalSinEmpMes > 0 ? (x.monto / totalSinEmpMes) * 100 : 0;
+                    return (
+                      <tr key={`${x.codigo}::${i}`} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-mono text-xs text-slate-700">
+                          {x.codigo || <span className="text-slate-400 italic">(manual)</span>}
+                        </td>
+                        <td className="px-3 py-2 text-slate-800">
+                          {x.descripcion || "—"}
+                          {x.manual && (
+                            <span className="ml-2 text-[10px] uppercase tracking-wider font-bold rounded px-1.5 py-0.5 bg-slate-100 text-slate-600">
+                              manual
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                          {x.nVentas.size}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                          {x.unidades}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800">
+                          {money(x.monto)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500">
+                          {pct.toFixed(1)}%
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </Modal>
     </div>
