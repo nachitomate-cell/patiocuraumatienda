@@ -56,7 +56,7 @@ export function FiadosScreen() {
   const filtrados = useMemo(() => {
     const t = term.trim().toLowerCase();
     if (!t) return clientes;
-    return clientes.filter((c) => c.nombre.toLowerCase().includes(t));
+    return clientes.filter((c) => (c.nombre || "").toLowerCase().includes(t));
   }, [clientes, term]);
 
   async function agregar() {

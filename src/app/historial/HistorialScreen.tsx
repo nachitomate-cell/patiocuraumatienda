@@ -182,7 +182,7 @@ export function HistorialScreen() {
       if (hasta && v.fecha > hasta) return false;
       if (!t) return true;
       return (
-        v.nro.toLowerCase().includes(t) ||
+        (v.nro || "").toLowerCase().includes(t) ||
         (v.cliente || "").toLowerCase().includes(t) ||
         (v.vendedor || "").toLowerCase().includes(t) ||
         (v.codigoBoleta || "").toLowerCase().includes(t)
