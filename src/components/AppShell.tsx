@@ -148,51 +148,54 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </Link>
               );
             })}
-
-            <div ref={otrosRef} className="relative shrink-0">
-              <button
-                onClick={() => setOtrosAbierto((o) => !o)}
-                aria-haspopup="menu"
-                aria-expanded={otrosAbierto}
-                className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${
-                  otrosActive
-                    ? "bg-cyan-500 text-slate-900 font-semibold"
-                    : "hover:bg-slate-700 text-slate-200"
-                }`}
-              >
-                <MoreHorizontal size={18} strokeWidth={2.2} />
-                <span className="hidden xl:inline">Otros</span>
-                <ChevronDown
-                  size={14}
-                  className={`transition-transform ${otrosAbierto ? "rotate-180" : ""}`}
-                />
-              </button>
-              {otrosAbierto && (
-                <div
-                  role="menu"
-                  className="absolute left-0 sm:left-auto sm:right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl py-1 min-w-[180px] z-50 anim-pop"
-                >
-                  {OTROS.map(({ href, label, Icon }) => {
-                    const active = path === href || path.startsWith(href + "/");
-                    return (
-                      <Link
-                        key={href}
-                        href={href}
-                        onClick={() => setOtrosAbierto(false)}
-                        className={`flex items-center gap-2 px-3 py-2 text-sm ${
-                          active
-                            ? "bg-cyan-500 text-slate-900 font-semibold"
-                            : "text-slate-200 hover:bg-slate-700"
-                        }`}
-                      >
-                        <Icon size={16} strokeWidth={2.2} /> {label}
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
           </nav>
+
+          {/* "Otros" fuera del <nav>: si vivía dentro, el overflow-x del nav
+              recortaba verticalmente el dropdown (CSS calcula overflow-y como
+              auto cuando overflow-x != visible) y el menú no se veía. */}
+          <div ref={otrosRef} className="relative shrink-0">
+            <button
+              onClick={() => setOtrosAbierto((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={otrosAbierto}
+              className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-sm transition-colors ${
+                otrosActive
+                  ? "bg-cyan-500 text-slate-900 font-semibold"
+                  : "hover:bg-slate-700 text-slate-200"
+              }`}
+            >
+              <MoreHorizontal size={18} strokeWidth={2.2} />
+              <span className="hidden xl:inline">Otros</span>
+              <ChevronDown
+                size={14}
+                className={`transition-transform ${otrosAbierto ? "rotate-180" : ""}`}
+              />
+            </button>
+            {otrosAbierto && (
+              <div
+                role="menu"
+                className="absolute right-0 mt-1 bg-slate-900 border border-slate-700 rounded-lg shadow-2xl py-1 min-w-[180px] z-50 anim-pop"
+              >
+                {OTROS.map(({ href, label, Icon }) => {
+                  const active = path === href || path.startsWith(href + "/");
+                  return (
+                    <Link
+                      key={href}
+                      href={href}
+                      onClick={() => setOtrosAbierto(false)}
+                      className={`flex items-center gap-2 px-3 py-2 text-sm ${
+                        active
+                          ? "bg-cyan-500 text-slate-900 font-semibold"
+                          : "text-slate-200 hover:bg-slate-700"
+                      }`}
+                    >
+                      <Icon size={16} strokeWidth={2.2} /> {label}
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           <div className="text-xs flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
