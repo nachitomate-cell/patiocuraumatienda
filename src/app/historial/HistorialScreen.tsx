@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   History,
@@ -798,15 +798,19 @@ function FilaVenta({
   }, [v.medioPago, v.clienteId]);
   // Carga la lista de clientes la primera vez que hace falta (al abrir el
   // detalle o al elegir "fiado"), no en el mount para no listar en toda fila.
+  // Usamos un ref como flag de "ya intenté" para evitar un loop cuando el
+  // negocio no tiene clientes: listarClientes devuelve [] y la guarda por
+  // clientes.length seguía disparando la carga en cada render.
+  const clientesIntentados = useRef(false);
   useEffect(() => {
-    if (!abierto) return;
-    if (clientes.length > 0 || cargandoClientes) return;
+    if (!abierto || clientesIntentados.current) return;
+    clientesIntentados.current = true;
     setCargandoClientes(true);
     listarClientes()
       .then((cs) => setClientes(cs))
       .catch(() => setClientes([]))
       .finally(() => setCargandoClientes(false));
-  }, [abierto, clientes.length, cargandoClientes]);
+  }, [abierto]);
 
   async function guardarMedioPago() {
     setGuardandoMedio(true);
