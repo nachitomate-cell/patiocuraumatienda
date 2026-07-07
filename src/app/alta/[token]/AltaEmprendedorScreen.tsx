@@ -286,7 +286,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     if (!t) return productos;
     return productos.filter(
       (p) =>
-        p.codigo.toLowerCase().includes(t) ||
+        (p.codigo || "").toLowerCase().includes(t) ||
         (p.descripcion || "").toLowerCase().includes(t)
     );
   }, [productos, busqueda]);
@@ -326,7 +326,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     return productos
       .filter(
         (p) =>
-          p.codigo.toLowerCase().includes(t) ||
+          (p.codigo || "").toLowerCase().includes(t) ||
           (p.descripcion || "").toLowerCase().includes(t)
       )
       .slice(0, 30);

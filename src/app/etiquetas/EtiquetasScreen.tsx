@@ -38,7 +38,7 @@ export function EtiquetasScreen() {
     return productos
       .filter(
         (p) =>
-          p.codigo.toLowerCase().includes(t) ||
+          (p.codigo || "").toLowerCase().includes(t) ||
           (p.descripcion || "").toLowerCase().includes(t)
       )
       .slice(0, 30);

@@ -124,7 +124,7 @@ export function StockScreen() {
       if (!okFiltro) return false;
       if (!t) return true;
       return (
-        p.codigo.toLowerCase().includes(t) ||
+        (p.codigo || "").toLowerCase().includes(t) ||
         (p.descripcion || "").toLowerCase().includes(t)
       );
     });
