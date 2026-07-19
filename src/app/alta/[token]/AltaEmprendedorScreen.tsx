@@ -574,7 +574,18 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       }
 
       // Movimientos de stock del emprendedor (bitácora) filtrados al rango.
-      const movsRango = movs.filter((m) => m.en >= inicioRango);
+      // El estado carga solo los últimos 100; si la lista viene al tope y el
+      // rango es amplio, se piden hasta 500 frescos para no truncar la hoja
+      // del Excel (solo se paga en exportaciones, que son acciones puntuales).
+      let movsFuente = movs;
+      if (rango !== "hoy" && movs.length >= 100) {
+        try {
+          movsFuente = await movimientosDeEmprendedor(emp.id, 500);
+        } catch {
+          // Se exporta con lo que hay en memoria.
+        }
+      }
+      const movsRango = movsFuente.filter((m) => m.en >= inicioRango);
 
       // Stats por código: unidades y $ vendidos + devueltos (para neto).
       const statsRango = new Map<
@@ -847,7 +858,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       // Fallback: descarga clásica.
       XLSX.writeFile(r.wb, r.filename);
       setEnviarErr(
-        "Este navegador no soporta compartir archivos directo. Descargué el Excel: adjuntalo a WhatsApp o email del administrador."
+        "No se pudo abrir el menú de compartir en este navegador. Descargué el Excel: adjúntalo por WhatsApp o email al administrador."
       );
     } catch (e) {
       setEnviarErr(

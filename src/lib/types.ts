@@ -16,6 +16,10 @@ export interface Producto {
   // ventas/devoluciones/movimientos históricos que lo referencian por código.
   eliminado?: boolean;
   eliminadoEn?: number; // epoch ms
+  // Última escritura sobre el doc (epoch ms del dispositivo que escribió).
+  // TODAS las rutas que escriben productos lo estampan: es la base de la
+  // sincronización delta del catálogo (ver todosLosProductos en repo.ts).
+  actualizadoEn?: number;
 }
 
 // Emprendedor que deja productos en consignación.

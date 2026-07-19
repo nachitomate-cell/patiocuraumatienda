@@ -173,17 +173,114 @@ export async function buscarProductos(term: string, max = 30): Promise<Producto[
     .filter((p) => !p.eliminado);
 }
 
+// ===== Cache persistente del catálogo (localStorage) + sync delta =====
+// El catálogo completo (3.500+ docs) era la lectura más cara del sistema:
+// cada carga de página del POS pagaba la colección entera. Ahora el catálogo
+// vive en localStorage (clave por negocio) y al abrir sesión solo se piden
+// los productos con actualizadoEn posterior a la última sincronización
+// (todas las escrituras de producto estampan ese campo). Un doc config
+// (config/catalogo.recargaEn) marca los eventos que el delta no puede ver
+// —renombrados, que borran documentos físicamente— y fuerza recarga total.
+//
+// Los docs que nunca han cambiado desde su carga inicial no tienen
+// actualizadoEn: el where(">") simplemente no los devuelve, que es lo
+// correcto (no cambiaron).
+type CacheCatalogo = { sync: number; productos: Producto[] };
+
+function claveCacheCatalogo(): string {
+  return `pc:catalogo:v1:${getNegocioId()}`;
+}
+
+function leerCacheCatalogo(): CacheCatalogo | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(claveCacheCatalogo());
+    if (!raw) return null;
+    const c = JSON.parse(raw) as CacheCatalogo;
+    if (!c || typeof c.sync !== "number" || !Array.isArray(c.productos)) return null;
+    return c;
+  } catch {
+    return null;
+  }
+}
+
+function guardarCacheCatalogo(productos: Producto[], sync: number): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(claveCacheCatalogo(), JSON.stringify({ sync, productos }));
+  } catch {
+    // Cuota llena o modo privado: se sigue sin cache persistente.
+  }
+}
+
+// Marca que hubo un borrado físico de documentos de producto (renombrar un
+// código crea doc nuevo y borra el viejo). Los caches delta no pueden
+// enterarse de un doc que desapareció; con esta marca, la próxima
+// sincronización de cada dispositivo hace recarga completa. Best-effort.
+async function marcarRecargaCatalogo(): Promise<void> {
+  try {
+    await setDoc(tdoc(CONFIG, "catalogo"), { recargaEn: Date.now() }, { merge: true });
+  } catch {
+    // no-op: en el peor caso un cache queda viejo hasta su Refrescar manual.
+  }
+}
+
+// Sincroniza el cache local con Firestore leyendo SOLO lo que cambió.
+// Devuelve null si corresponde recarga completa (marca de recarga, error).
+async function sincronizarCatalogo(cache: CacheCatalogo): Promise<Producto[] | null> {
+  try {
+    // 1 lectura: ¿hubo renombrados desde la última sync?
+    const meta = await getDoc(tdoc(CONFIG, "catalogo"));
+    const recargaEn = meta.exists() ? (meta.data().recargaEn as number) || 0 : 0;
+    if (recargaEn > cache.sync) return null;
+
+    // Margen de 60 min contra relojes desfasados entre dispositivos (todas
+    // las escrituras estampan actualizadoEn con Date.now() local). Releer
+    // un puñado de docs recientes es barato; perder una escritura no.
+    const desde = cache.sync - 60 * 60 * 1000;
+    const snap = await getDocs(
+      query(tcol(PRODUCTOS), where("actualizadoEn", ">", desde))
+    );
+    const porCodigo = new Map(cache.productos.map((p) => [p.codigo, p]));
+    for (const d of snap.docs) {
+      const p = d.data() as Producto;
+      const k = p.codigo || d.id;
+      if (p.eliminado) porCodigo.delete(k);
+      else porCodigo.set(k, p);
+    }
+    const lista = Array.from(porCodigo.values());
+    guardarCacheCatalogo(lista, Date.now());
+    return lista;
+  } catch {
+    return null;
+  }
+}
+
 // Carga todo el catalogo (para el panel de inventario y el buscador de venta).
-// Se cachea en memoria: la primera vez lee la colección, luego se reutiliza
-// entre pantallas sin volver a leer. `force` fuerza una relectura (Refrescar).
+// Cacheado en memoria por sesión y en localStorage entre sesiones; ver el
+// bloque de sync delta arriba. `force` fuerza relectura completa (Refrescar).
 // Excluye productos soft-deleted (`eliminado === true`): las ventas históricas
 // siguen intactas pero el POS y el stock ya no los ven.
 export async function todosLosProductos(force = false): Promise<Producto[]> {
   if (_catalogo && !force) return _catalogo;
+
+  if (!force) {
+    const cache = leerCacheCatalogo();
+    if (cache) {
+      const sincronizado = await sincronizarCatalogo(cache);
+      if (sincronizado) {
+        _catalogo = sincronizado;
+        return _catalogo;
+      }
+    }
+  }
+
   const snap = await getDocs(tcol(PRODUCTOS));
+  const ahora = Date.now();
   _catalogo = snap.docs
     .map((d) => d.data() as Producto)
     .filter((p) => !p.eliminado);
+  guardarCacheCatalogo(_catalogo, ahora);
   return _catalogo;
 }
 
@@ -199,7 +296,7 @@ export async function ajustarProducto(
   // Snapshot anterior para comparar y registrar (si pertenece a un emprendedor).
   const snapAntes = await getDoc(ref);
   const antes = snapAntes.exists() ? (snapAntes.data() as Producto) : null;
-  await setDoc(ref, cambios, { merge: true });
+  await setDoc(ref, { ...cambios, actualizadoEn: Date.now() }, { merge: true });
   parchearProducto(cod, cambios);
 
   if (!antes?.emprendedorId) return;
@@ -299,10 +396,17 @@ export async function renombrarProducto(
     if (snapNuevo.exists()) {
       throw new Error(`Ya existe un producto con el código ${codNuevo}.`);
     }
-    tx.set(refNuevo, { ...(snapViejo.data() as Producto), codigo: codNuevo });
+    tx.set(refNuevo, {
+      ...(snapViejo.data() as Producto),
+      codigo: codNuevo,
+      actualizadoEn: Date.now(),
+    });
     tx.delete(refViejo);
   });
   invalidarCatalogo();
+  // El delete físico es invisible para los caches delta de otros
+  // dispositivos: se marca recarga completa.
+  await marcarRecargaCatalogo();
 
   const antes = snapAntes.exists() ? (snapAntes.data() as Producto) : null;
   if (antes?.emprendedorId) {
@@ -379,7 +483,11 @@ export async function aplicarRenombrados(
     for (const c of cambios.slice(i, i + CHUNK)) {
       const data = mapa.get(c.de);
       if (!data) continue;
-      batch.set(tdoc(PRODUCTOS, c.a), { ...data, codigo: c.a });
+      batch.set(tdoc(PRODUCTOS, c.a), {
+        ...data,
+        codigo: c.a,
+        actualizadoEn: Date.now(),
+      });
       batch.delete(tdoc(PRODUCTOS, c.de));
     }
     await batch.commit();
@@ -387,6 +495,8 @@ export async function aplicarRenombrados(
     onProgress?.(hechos, cambios.length);
   }
   invalidarCatalogo();
+  // Deletes físicos masivos: los caches delta necesitan recarga completa.
+  if (cambios.length > 0) await marcarRecargaCatalogo();
   return hechos;
 }
 
@@ -402,7 +512,11 @@ export async function importarCatalogo(
   for (let i = 0; i < productos.length; i += CHUNK) {
     const batch = writeBatch(db);
     for (const p of productos.slice(i, i + CHUNK)) {
-      batch.set(tdoc(PRODUCTOS, p.codigo), p, { merge: true });
+      batch.set(
+        tdoc(PRODUCTOS, p.codigo),
+        { ...p, actualizadoEn: Date.now() },
+        { merge: true }
+      );
     }
     await batch.commit();
     hechos = Math.min(i + CHUNK, productos.length);
@@ -479,6 +593,7 @@ export async function confirmarVenta(
     if (l.manual || !l.codigo) continue;
     batch.update(tdoc(PRODUCTOS, l.codigo), {
       stockActual: increment(-l.cantidad),
+      actualizadoEn: Date.now(),
     });
   }
 
@@ -987,6 +1102,7 @@ export async function agregarProductoEmprendedor(
         emprendedorId: emp.id,
         emprendedorNombre: emp.nombre,
         creadoEn: Date.now(),
+        actualizadoEn: Date.now(),
       };
       if (vence) docProd.vence = vence;
       tx.set(tdoc(PRODUCTOS, cod), docProd);
@@ -1102,7 +1218,7 @@ export async function eliminarProductoEmprendedor(
   const ahora = Date.now();
   await setDoc(
     ref,
-    { eliminado: true, eliminadoEn: ahora },
+    { eliminado: true, eliminadoEn: ahora, actualizadoEn: ahora },
     { merge: true }
   );
   // El producto ya no debe aparecer en el catálogo cacheado del POS.
@@ -1176,6 +1292,7 @@ export async function actualizarProductoEmprendedor(
     limpio.vence = (cambios.vence || "").trim();
   }
   if (Object.keys(limpio).length === 0) return;
+  limpio.actualizadoEn = Date.now();
   await setDoc(ref, limpio, { merge: true });
   parchearProducto(cod, limpio as Partial<Producto>);
 
@@ -1263,7 +1380,10 @@ export async function ajustarStockEmprendedor(
     if (despues < 0) {
       throw new Error(`No puedes retirar ${-d}: solo tienes ${antes} en stock.`);
     }
-    const cambios: Record<string, unknown> = { stockActual: despues };
+    const cambios: Record<string, unknown> = {
+      stockActual: despues,
+      actualizadoEn: Date.now(),
+    };
     if (propioPorPrefijo) {
       // Backfill perezoso del vínculo, igual que actualizarProductoEmprendedor.
       cambios.emprendedorId = emp.id;
@@ -1537,6 +1657,7 @@ export async function registrarEntrada(
         descripcion: l.descripcion,
         lote: l.lote ?? "",
         stockActual: increment(l.cantidad),
+        actualizadoEn: Date.now(),
       },
       { merge: true }
     );
@@ -1726,6 +1847,7 @@ export async function anularVenta(
     if (l.manual || !l.codigo) continue;
     batch.update(tdoc(PRODUCTOS, l.codigo), {
       stockActual: increment(l.cantidad),
+      actualizadoEn: Date.now(),
     });
   }
 
@@ -1836,6 +1958,7 @@ export async function registrarDevolucion(
     if (l.manual || !l.codigo) continue;
     batch.update(tdoc(PRODUCTOS, l.codigo), {
       stockActual: increment(l.cantidad),
+      actualizadoEn: Date.now(),
     });
   }
 
