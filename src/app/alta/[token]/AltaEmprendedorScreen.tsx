@@ -24,6 +24,7 @@ import * as XLSX from "xlsx";
 import {
   getEmprendedorPorToken,
   agregarProductoEmprendedor,
+  ajustarStockEmprendedor,
   productosDeEmprendedor,
   ventasDeEmprendedor,
   actualizarProductoEmprendedor,
@@ -241,13 +242,18 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   async function agregar() {
     if (!emp) return;
     if (!descripcion.trim()) return setMsg("Escribe el nombre del producto.");
-    if (precio <= 0) return setMsg("Ingresa un precio válido.");
+    // Espeja el saneo del backend: un type=number igual permite tipear
+    // negativos o decimales, y el estado local debe quedar idéntico a lo
+    // que se persistió.
+    const precioN = Math.max(0, Math.round(Number(precio) || 0));
+    const stockN = Math.max(0, Math.round(Number(stock) || 0));
+    if (precioN <= 0) return setMsg("Ingresa un precio válido.");
     setBusy(true);
     setMsg("");
     try {
       const cod = await agregarProductoEmprendedor(
         emp,
-        { descripcion, precio, stock, vence, codigo: codigoCustom },
+        { descripcion, precio: precioN, stock: stockN, vence, codigo: codigoCustom },
         "emprendedor",
         emp.nombre
       );
@@ -257,8 +263,8 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           {
             codigo: cod,
             descripcion: descripcion.trim(),
-            precio,
-            stockActual: stock,
+            precio: precioN,
+            stockActual: stockN,
             costo: 0,
             emprendedorId: emp.id,
             emprendedorNombre: emp.nombre,
@@ -356,32 +362,29 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setAjusteErr("Ingresa una cantidad mayor a 0.");
       return;
     }
-    const actual = ajusteProd.stockActual || 0;
-    const nuevo = ajusteTipo === "in" ? actual + n : actual - n;
-    if (nuevo < 0) {
-      setAjusteErr(`No puedes retirar ${n}: solo tienes ${actual} en stock.`);
-      return;
-    }
     setAjusteBusy(true);
     setAjusteErr("");
     setAjusteOk("");
     try {
-      await actualizarProductoEmprendedor(
+      // Ajuste por DELTA en transacción: valida y suma/resta sobre el stock
+      // fresco de Firestore, no sobre el snapshot local (que puede estar
+      // viejo si el POS vendió entre medio). Devuelve el stock real.
+      const r = await ajustarStockEmprendedor(
         emp,
         ajusteProd.codigo,
-        { stockActual: nuevo },
+        ajusteTipo === "in" ? n : -n,
         "emprendedor",
         emp.nombre
       );
       setProductos((prev) =>
         prev.map((x) =>
-          x.codigo === ajusteProd.codigo ? { ...x, stockActual: nuevo } : x
+          x.codigo === ajusteProd.codigo ? { ...x, stockActual: r.despues } : x
         )
       );
       setAjusteOk(
         `${ajusteTipo === "in" ? "Ingreso" : "Retiro"} de ${n} u. de "${
           ajusteProd.descripcion || ajusteProd.codigo
-        }" registrado. Quedan ${nuevo} u.`
+        }" registrado. Quedan ${r.despues} u.`
       );
       // Deja la modal abierta para hacer varios ingresos/retiros seguidos:
       // limpia el producto elegido y el buscador para el siguiente.
@@ -404,24 +407,22 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setQuickErr("Ingresa una cantidad mayor a 0.");
       return;
     }
-    const actual = p.stockActual || 0;
-    const nuevo = quickTipo === "in" ? actual + n : actual - n;
-    if (nuevo < 0) {
-      setQuickErr(`No puedes retirar ${n}: solo tienes ${actual} en stock.`);
-      return;
-    }
     setBusyQuick(true);
     setQuickErr("");
     try {
-      await actualizarProductoEmprendedor(
+      // Mismo criterio que confirmarAjuste: delta transaccional sobre el
+      // stock fresco, nunca un valor absoluto desde el snapshot local.
+      const r = await ajustarStockEmprendedor(
         emp,
         p.codigo,
-        { stockActual: nuevo },
+        quickTipo === "in" ? n : -n,
         "emprendedor",
         emp.nombre
       );
       setProductos((prev) =>
-        prev.map((x) => (x.codigo === p.codigo ? { ...x, stockActual: nuevo } : x))
+        prev.map((x) =>
+          x.codigo === p.codigo ? { ...x, stockActual: r.despues } : x
+        )
       );
       setQuickCodigo(null);
       refrescarHistorial(emp.id);
@@ -540,7 +541,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         devsRango = todas
           .map((d) => ({
             ...d,
-            items: d.items.filter(
+            items: (d.items || []).filter(
               (l) =>
                 l.emprendedorId === emp.id ||
                 (!!l.codigo && l.codigo.startsWith(emp.prefijo + "-"))
@@ -1053,7 +1054,8 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
               />
               <span className="block text-[11px] text-slate-500 mt-1">
                 Déjalo vacío para que se genere automáticamente. Si lo escribes,
-                debe empezar con <b className="font-mono">{emp?.prefijo}-</b>.
+                puede ser solo el número (ej: {proximoSugerido}) o empezar con{" "}
+                <b className="font-mono">{emp?.prefijo}-</b>.
               </span>
             </label>
             <button

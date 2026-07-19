@@ -860,6 +860,16 @@ export async function agregarProductoEmprendedor(
   const vence = (datos.vence || "").trim();
   const codigoPedido = (datos.codigo || "").trim();
 
+  // Saneo defensivo antes de tocar Firestore: ambas UIs validan, pero un
+  // input type=number permite tipear negativos/decimales y un NaN aquí
+  // dejaría un doc corrupto que después revienta buscadores y reportes.
+  if (!emp.prefijo) throw new Error("El emprendedor no tiene prefijo asignado.");
+  const descLimpia = (datos.descripcion || "").trim();
+  if (!descLimpia) throw new Error("Falta el nombre del producto.");
+  const precioN = Math.max(0, Math.round(Number(datos.precio) || 0));
+  const costoN = Math.max(0, Math.round(Number(datos.costo) || 0));
+  const stockN = Math.max(0, Math.round(Number(datos.stock) || 0));
+
   // Correlativos ya ocupados por documentos reales. La auto-generación toma
   // el PRIMER hueco libre desde el contador, saltando de a uno sobre este set
   // en memoria: así los códigos manuales fuera de serie (p.ej. BEND-03381
@@ -892,7 +902,12 @@ export async function agregarProductoEmprendedor(
     let nuevoCount = curCount;
 
     if (codigoPedido) {
-      cod = normalizarCodigo(codigoPedido);
+      // Solo dígitos => el emprendedor escribió el correlativo a secas
+      // (p.ej. "483" desde el móvil): se antepone su prefijo y se canoniza
+      // a 4 dígitos vía Number (evita variantes tipo BEND-03381).
+      cod = /^\d+$/.test(codigoPedido)
+        ? `${emp.prefijo}-${String(Number(codigoPedido)).padStart(4, "0")}`
+        : normalizarCodigo(codigoPedido);
       if (!cod.startsWith(`${emp.prefijo}-`)) {
         throw new Error(
           `El código debe empezar con "${emp.prefijo}-" (tu prefijo de emprendedor).`
@@ -934,10 +949,10 @@ export async function agregarProductoEmprendedor(
 
     const docProd: Record<string, unknown> = {
       codigo: cod,
-      descripcion: datos.descripcion.trim(),
-      precio: datos.precio,
-      costo: datos.costo ?? 0,
-      stockActual: datos.stock ?? 0,
+      descripcion: descLimpia,
+      precio: precioN,
+      costo: costoN,
+      stockActual: stockN,
       emprendedorId: emp.id,
       emprendedorNombre: emp.nombre,
       creadoEn: Date.now(),
@@ -953,9 +968,9 @@ export async function agregarProductoEmprendedor(
     origen,
     accion: "producto_agregado",
     codigo,
-    descripcion: datos.descripcion.trim(),
+    descripcion: descLimpia,
     despues:
-      `precio ${datos.precio} · stock ${datos.stock ?? 0}` +
+      `precio ${precioN} · stock ${stockN}` +
       (vence ? ` · vence ${vence}` : ""),
   });
   return codigo;
@@ -1153,6 +1168,68 @@ export async function actualizarProductoEmprendedor(
   }
 }
 
+// Ajuste de stock por DELTA (Ingreso/Retiro de /alta). A diferencia de
+// actualizarProductoEmprendedor —que escribe un valor absoluto y sirve para
+// "editar la ficha"—, esto corre en transacción sobre el stock FRESCO de
+// Firestore: si el POS vendió unidades entre que el emprendedor cargó la
+// página y confirmó el ajuste, la venta no se pisa (las ventas descuentan
+// con increment(), que la transacción ve al reintentar). También valida el
+// "no puedes retirar más de lo que tienes" contra el valor fresco, no contra
+// el snapshot posiblemente viejo de la UI. Devuelve antes/después reales
+// para que la pantalla muestre números correctos.
+export async function ajustarStockEmprendedor(
+  emp: { id: string; prefijo: string; nombre?: string },
+  codigo: string,
+  delta: number,
+  origen: "emprendedor" | "admin" = "emprendedor",
+  quien = ""
+): Promise<{ antes: number; despues: number }> {
+  const cod = codigo.trim();
+  if (!cod) throw new Error("Falta el código del producto.");
+  const d = Math.round(Number(delta) || 0);
+  if (d === 0) throw new Error("Ingresa una cantidad mayor a 0.");
+  const ref = tdoc(PRODUCTOS, cod);
+  const res = await runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error("El producto no existe.");
+    const p = snap.data() as Producto;
+    if (p.eliminado) {
+      throw new Error("El producto fue eliminado del inventario.");
+    }
+    const propioPorId = !!p.emprendedorId && p.emprendedorId === emp.id;
+    const propioPorPrefijo =
+      !p.emprendedorId && !!p.codigo && p.codigo.startsWith(`${emp.prefijo}-`);
+    if (!propioPorId && !propioPorPrefijo) {
+      throw new Error("Este producto no pertenece a este emprendedor.");
+    }
+    const antes = p.stockActual || 0;
+    const despues = antes + d;
+    if (despues < 0) {
+      throw new Error(`No puedes retirar ${-d}: solo tienes ${antes} en stock.`);
+    }
+    const cambios: Record<string, unknown> = { stockActual: despues };
+    if (propioPorPrefijo) {
+      // Backfill perezoso del vínculo, igual que actualizarProductoEmprendedor.
+      cambios.emprendedorId = emp.id;
+      if (emp.nombre) cambios.emprendedorNombre = emp.nombre;
+    }
+    tx.set(ref, cambios, { merge: true });
+    return { antes, despues, descripcion: p.descripcion || "" };
+  });
+  parchearProducto(cod, { stockActual: res.despues });
+  await registrarMovEmp(emp.id, {
+    en: Date.now(),
+    por: quien || (origen === "emprendedor" ? emp.nombre || "Emprendedor" : "Admin"),
+    origen,
+    accion: "stock_cambiado",
+    codigo: cod,
+    descripcion: res.descripcion,
+    antes: String(res.antes),
+    despues: String(res.despues),
+  });
+  return { antes: res.antes, despues: res.despues };
+}
+
 // Ventas que tienen al menos una línea de este emprendedor (filtra las
 // líneas para devolver solo lo del emprendedor). Lee las últimas N ventas y
 // filtra cliente-side: suficiente para un POS chico; si crece, conviene una
@@ -1171,7 +1248,9 @@ export async function ventasDeEmprendedor(
   return vs
     .map((v) => ({
       ...v,
-      items: v.items.filter(
+      // (v.items || []): un doc de venta corrupto/legacy sin items no debe
+      // reventar todo el portal del emprendedor.
+      items: (v.items || []).filter(
         (l) =>
           l.emprendedorId === emp.id ||
           (!!l.codigo && l.codigo.startsWith(pref))
