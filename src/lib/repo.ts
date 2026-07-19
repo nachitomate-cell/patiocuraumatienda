@@ -451,10 +451,25 @@ export async function confirmarVenta(
   });
   const total = itemsConEmp.reduce((s, l) => s + subtotalLinea(l), 0);
 
+  // empKeys: ids de emprendedor y prefijos de código presentes en la venta.
+  // Permite que /alta consulte SOLO las ventas del emprendedor
+  // (array-contains-any) en vez de leer las últimas 500 del negocio entero.
+  // Se guardan ambas llaves porque una línea puede venir sin emprendedorId
+  // (cache frío o producto legacy) pero el prefijo siempre está en el código.
+  const empKeys = new Set<string>();
+  for (const l of itemsConEmp) {
+    if (l.emprendedorId) empKeys.add(l.emprendedorId);
+    if (!l.manual && l.codigo) {
+      const m = String(l.codigo).match(/^([A-Z0-9]+)-/);
+      if (m) empKeys.add(`PREF:${m[1]}`);
+    }
+  }
+
   batch.set(tdoc(VENTAS, venta.nro), {
     ...venta,
     items: itemsConEmp,
     total,
+    empKeys: Array.from(empKeys),
     creadoEn: Date.now(),
   });
 
@@ -578,6 +593,26 @@ export async function movimientosDeEmprendedor(
   if (!empId) return [];
   const q = query(
     tcol(EMPRENDEDORES, empId, MOVIMIENTOS_EMP),
+    orderBy("en", "desc"),
+    limit(max)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => d.data() as MovimientoEmprendedor);
+}
+
+// Solo los movimientos posteriores a `despuesDe` (epoch ms). Para refrescar
+// la bitácora tras una acción en /alta leyendo 1-2 docs en vez de volver a
+// pagar los 100 más recientes en cada alta/ajuste. where + orderBy sobre el
+// mismo campo: no necesita índice compuesto.
+export async function movimientosNuevosDeEmprendedor(
+  empId: string,
+  despuesDe: number,
+  max = 50
+): Promise<MovimientoEmprendedor[]> {
+  if (!empId) return [];
+  const q = query(
+    tcol(EMPRENDEDORES, empId, MOVIMIENTOS_EMP),
+    where("en", ">", despuesDe),
     orderBy("en", "desc"),
     limit(max)
   );
@@ -853,7 +888,11 @@ export async function agregarProductoEmprendedor(
   emp: Emprendedor,
   datos: { descripcion: string; precio: number; costo?: number; stock?: number; vence?: string; codigo?: string },
   origen: "emprendedor" | "admin" = "emprendedor",
-  quien = ""
+  quien = "",
+  // Códigos que el caller ya tiene en memoria (el inventario cargado en
+  // /alta). Evita pagar una query de TODO el prefijo en cada alta: con esta
+  // pista + el contador, la auto-generación acierta al primer intento.
+  codigosOcupados?: string[]
 ): Promise<string> {
   const db = getDb();
   const empRef = tdoc(EMPRENDEDORES, emp.id);
@@ -870,16 +909,98 @@ export async function agregarProductoEmprendedor(
   const costoN = Math.max(0, Math.round(Number(datos.costo) || 0));
   const stockN = Math.max(0, Math.round(Number(datos.stock) || 0));
 
-  // Correlativos ya ocupados por documentos reales. La auto-generación toma
-  // el PRIMER hueco libre desde el contador, saltando de a uno sobre este set
-  // en memoria: así los códigos manuales fuera de serie (p.ej. BEND-03381
-  // tipeado a mano) no arrastran la secuencia, y tampoco importa que el
-  // contador esté por debajo de la realidad (seed impreciso, imports). Se
-  // consulta por ID de documento —no por campo codigo— para cubrir docs
-  // legacy sin ese campo y soft-eliminados, cuyos docs siguen ocupando el
-  // código. Number() normaliza ceros a la izquierda ("03381" → 3381).
-  const tomados = new Set<number>();
-  if (!codigoPedido) {
+  // Correlativos ya ocupados. La auto-generación toma el PRIMER hueco libre
+  // desde el contador, saltando de a uno sobre este set en memoria: así los
+  // códigos manuales fuera de serie (p.ej. BEND-03381 tipeado a mano) no
+  // arrastran la secuencia. Para no pagar lecturas de más, la primera pasada
+  // usa solo la pista del caller + el bucle defensivo con tx.get (costo
+  // normal: 1-2 lecturas); la query de TODO el prefijo queda como fallback
+  // para el caso raro de un contador muy desviado de la realidad.
+  // Number() normaliza ceros a la izquierda ("03381" → 3381).
+  const reCanon = new RegExp(`^${emp.prefijo}-(\\d+)$`);
+  const pista = new Set<number>();
+  for (const c of codigosOcupados || []) {
+    const m = (c || "").trim().toUpperCase().match(reCanon);
+    if (m) pista.add(Number(m[1]));
+  }
+
+  const AGOTADO = "No pude generar un código libre.";
+  const correrAlta = (tomados: Set<number>, cap: number) =>
+    runTransaction(db, async (tx) => {
+      const s = await tx.get(empRef);
+      const curCount = (s.exists() ? (s.data().productosCount as number) || 0 : 0);
+
+      let cod: string;
+      let nuevoCount = curCount;
+
+      if (codigoPedido) {
+        // Solo dígitos => el emprendedor escribió el correlativo a secas
+        // (p.ej. "483" desde el móvil): se antepone su prefijo y se canoniza
+        // a 4 dígitos vía Number (evita variantes tipo BEND-03381).
+        cod = /^\d+$/.test(codigoPedido)
+          ? `${emp.prefijo}-${String(Number(codigoPedido)).padStart(4, "0")}`
+          : normalizarCodigo(codigoPedido);
+        if (!cod.startsWith(`${emp.prefijo}-`)) {
+          throw new Error(
+            `El código debe empezar con "${emp.prefijo}-" (tu prefijo de emprendedor).`
+          );
+        }
+        // Conflict check: si ya existe un producto con ese código, no lo
+        // pisamos. tx.get dentro de la transacción garantiza atomicidad.
+        const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
+        if (snapProd.exists()) {
+          throw new Error(`Ya existe un producto con el código ${cod}.`);
+        }
+        // Ojo: NO se mueve productosCount aquí. Un código manual alto (p.ej.
+        // BEND-3381) arrastraría la secuencia automática hasta ahí; el set
+        // `tomados` ya garantiza que la auto-generación no choque con él.
+      } else {
+        // Primer correlativo libre después del contador según el set; el
+        // bucle con tx.get verifica contra Firestore lo que el set no ve
+        // (soft-eliminados fuera del inventario, altas concurrentes).
+        nuevoCount = curCount;
+        do {
+          nuevoCount++;
+        } while (tomados.has(nuevoCount));
+        cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
+        for (let i = 0; ; i++) {
+          const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
+          if (!snapProd.exists()) break;
+          if (i >= cap) throw new Error(AGOTADO);
+          do {
+            nuevoCount++;
+          } while (tomados.has(nuevoCount));
+          cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
+        }
+      }
+
+      if (nuevoCount !== curCount) {
+        tx.update(empRef, { productosCount: nuevoCount });
+      }
+
+      const docProd: Record<string, unknown> = {
+        codigo: cod,
+        descripcion: descLimpia,
+        precio: precioN,
+        costo: costoN,
+        stockActual: stockN,
+        emprendedorId: emp.id,
+        emprendedorNombre: emp.nombre,
+        creadoEn: Date.now(),
+      };
+      if (vence) docProd.vence = vence;
+      tx.set(tdoc(PRODUCTOS, cod), docProd);
+      return cod;
+    });
+
+  let codigo: string;
+  try {
+    codigo = await correrAlta(pista, 12);
+  } catch (e) {
+    if (codigoPedido || !(e instanceof Error) || e.message !== AGOTADO) throw e;
+    // Fallback caro (raro): set completo por ID de documento, que cubre docs
+    // legacy sin campo codigo y soft-eliminados que siguen ocupando código.
+    const tomados = new Set<number>(pista);
     const snapCods = await getDocs(
       query(
         tcol(PRODUCTOS),
@@ -887,80 +1008,12 @@ export async function agregarProductoEmprendedor(
         where(documentId(), "<=", `${emp.prefijo}-${String.fromCharCode(0xf8ff)}`)
       )
     );
-    const reCanon = new RegExp(`^${emp.prefijo}-(\\d+)$`);
     for (const d of snapCods.docs) {
       const m = d.id.match(reCanon);
       if (m) tomados.add(Number(m[1]));
     }
+    codigo = await correrAlta(tomados, 50);
   }
-
-  const codigo = await runTransaction(db, async (tx) => {
-    const s = await tx.get(empRef);
-    const curCount = (s.exists() ? (s.data().productosCount as number) || 0 : 0);
-
-    let cod: string;
-    let nuevoCount = curCount;
-
-    if (codigoPedido) {
-      // Solo dígitos => el emprendedor escribió el correlativo a secas
-      // (p.ej. "483" desde el móvil): se antepone su prefijo y se canoniza
-      // a 4 dígitos vía Number (evita variantes tipo BEND-03381).
-      cod = /^\d+$/.test(codigoPedido)
-        ? `${emp.prefijo}-${String(Number(codigoPedido)).padStart(4, "0")}`
-        : normalizarCodigo(codigoPedido);
-      if (!cod.startsWith(`${emp.prefijo}-`)) {
-        throw new Error(
-          `El código debe empezar con "${emp.prefijo}-" (tu prefijo de emprendedor).`
-        );
-      }
-      // Conflict check: si ya existe un producto con ese código, no lo
-      // pisamos. tx.get dentro de la transacción garantiza atomicidad.
-      const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
-      if (snapProd.exists()) {
-        throw new Error(`Ya existe un producto con el código ${cod}.`);
-      }
-      // Ojo: NO se mueve productosCount aquí. Un código manual alto (p.ej.
-      // BEND-3381) arrastraría la secuencia automática hasta ahí; el set
-      // `tomados` ya garantiza que la auto-generación no choque con él.
-    } else {
-      // Primer correlativo libre después del contador. El set cubre todo lo
-      // existente al momento de la consulta; el bucle con tx.get queda como
-      // defensa ante altas concurrentes (docs creados entre esa consulta y
-      // esta transacción), donde bastan uno o dos saltos extra.
-      nuevoCount = curCount;
-      do {
-        nuevoCount++;
-      } while (tomados.has(nuevoCount));
-      cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
-      for (let i = 0; i < 50; i++) {
-        const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
-        if (!snapProd.exists()) break;
-        do {
-          nuevoCount++;
-        } while (tomados.has(nuevoCount));
-        cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
-        if (i === 49) throw new Error("No pude generar un código libre.");
-      }
-    }
-
-    if (nuevoCount !== curCount) {
-      tx.update(empRef, { productosCount: nuevoCount });
-    }
-
-    const docProd: Record<string, unknown> = {
-      codigo: cod,
-      descripcion: descLimpia,
-      precio: precioN,
-      costo: costoN,
-      stockActual: stockN,
-      emprendedorId: emp.id,
-      emprendedorNombre: emp.nombre,
-      creadoEn: Date.now(),
-    };
-    if (vence) docProd.vence = vence;
-    tx.set(tdoc(PRODUCTOS, cod), docProd);
-    return cod;
-  });
   invalidarCatalogo(); // producto nuevo en el catálogo
   await registrarMovEmp(emp.id, {
     en: Date.now(),
@@ -976,39 +1029,42 @@ export async function agregarProductoEmprendedor(
   return codigo;
 }
 
-// Productos de un emprendedor. Hace DOS lecturas y deduplica:
-//  1) por campo emprendedorId (productos nuevos, estampados en alta).
-//  2) por prefijo del código (productos legacy que jamás tuvieron el campo:
-//     por la migración inicial el catálogo no traía emprendedorId; el doc
-//     emprendedor se creó después, así que la query por campo devuelve 0).
-// Tomar la unión permite que un emprendedor recién enrolado vea sus productos
-// históricos al toque, sin necesidad de un backfill separado.
+// Productos de un emprendedor. Query única por campo emprendedorId: el
+// backfill (scripts/backfill-links-lecturas.mjs) estampó el campo en todo el
+// catálogo histórico, y las altas nuevas siempre lo estampan. Antes se
+// hacían DOS queries (por campo Y por prefijo del código) y Firestore
+// cobraba dos veces casi todos los docs — con catálogos de 400+ productos
+// eso duplicaba el costo de cada visita a /alta.
+//
+// Fallback: si la query por campo devuelve 0, se consulta por prefijo del
+// código (rango sobre el ID del doc). Cubre al emprendedor recién enrolado
+// cuyos productos históricos aún no tienen el campo — y cuesta 0 lecturas
+// extra cuando de verdad no hay nada.
 export async function productosDeEmprendedor(
   emp: { id: string; prefijo: string }
 ): Promise<Producto[]> {
-  // Truco de prefix match en Firestore: rango [start, end] cubre todo lo que
-  // empieza con `${prefijo}-`. end usa 0xF8FF como sentinel, mayor que
-  // cualquier carácter ASCII normal.
-  const start = `${emp.prefijo}-`;
-  const end = `${emp.prefijo}-${String.fromCharCode(0xf8ff)}`;
-  const [porIdSnap, porPrefijoSnap] = await Promise.all([
-    getDocs(query(tcol(PRODUCTOS), where("emprendedorId", "==", emp.id))),
-    getDocs(
-      query(tcol(PRODUCTOS), where("codigo", ">=", start), where("codigo", "<=", end))
-    ),
-  ]);
-  const map = new Map<string, Producto>();
-  for (const d of porIdSnap.docs) {
+  const porId = await getDocs(
+    query(tcol(PRODUCTOS), where("emprendedorId", "==", emp.id))
+  );
+  let docs = porId.docs;
+  if (docs.length === 0) {
+    // Prefix match por ID de documento: rango [PREF-, PREF-].
+    const porPrefijo = await getDocs(
+      query(
+        tcol(PRODUCTOS),
+        where(documentId(), ">=", `${emp.prefijo}-`),
+        where(documentId(), "<=", `${emp.prefijo}-${String.fromCharCode(0xf8ff)}`)
+      )
+    );
+    docs = porPrefijo.docs;
+  }
+  const res: Producto[] = [];
+  for (const d of docs) {
     const p = d.data() as Producto;
     if (p.eliminado) continue;
-    map.set(p.codigo, p);
+    res.push(p);
   }
-  for (const d of porPrefijoSnap.docs) {
-    const p = d.data() as Producto;
-    if (p.eliminado) continue;
-    if (!map.has(p.codigo)) map.set(p.codigo, p);
-  }
-  return Array.from(map.values());
+  return res;
 }
 
 // Elimina un producto del catálogo del emprendedor (soft-delete). Valida que
@@ -1231,20 +1287,40 @@ export async function ajustarStockEmprendedor(
 }
 
 // Ventas que tienen al menos una línea de este emprendedor (filtra las
-// líneas para devolver solo lo del emprendedor). Lee las últimas N ventas y
-// filtra cliente-side: suficiente para un POS chico; si crece, conviene una
-// segunda colección indexada por emprendedor o un campo emprendedorIds en la
-// venta (array) con un índice.
+// líneas para devolver solo lo del emprendedor).
 //
-// Doble match (igual que productosDeEmprendedor): el emprendedorId estampado
-// en la línea, O el prefijo del código. Esto cubre las ventas históricas
-// hechas antes de que existiera el doc del emprendedor.
+// Camino barato: query dirigida por empKeys (estampado en confirmarVenta y
+// backfilleado en el histórico) — Firestore devuelve SOLO las ventas del
+// emprendedor, en vez de cobrar las últimas 500 del negocio entero en cada
+// visita a /alta. Requiere el índice compuesto empKeys(CONTAINS) +
+// creadoEn(DESC) de firestore.indexes.json.
+//
+// Fallback: si el índice no existe o aún se está construyendo, cae al
+// camino caro anterior (últimas 500 filtradas cliente-side) para no romper
+// el portal; el warn en consola delata que se está pagando de más.
 export async function ventasDeEmprendedor(
   emp: { id: string; prefijo: string },
-  max = 500
+  max = 300
 ): Promise<Venta[]> {
-  const vs = await ultimasVentas(max);
   const pref = `${emp.prefijo}-`;
+  let vs: Venta[];
+  try {
+    const snap = await getDocs(
+      query(
+        tcol(VENTAS),
+        where("empKeys", "array-contains-any", [emp.id, `PREF:${emp.prefijo}`]),
+        orderBy("creadoEn", "desc"),
+        limit(max)
+      )
+    );
+    vs = snap.docs.map((d) => d.data() as Venta);
+  } catch (e) {
+    console.warn(
+      "ventasDeEmprendedor: query por empKeys falló (¿falta el índice compuesto?); usando fallback caro.",
+      e
+    );
+    vs = await ultimasVentas(500);
+  }
   return vs
     .map((v) => ({
       ...v,

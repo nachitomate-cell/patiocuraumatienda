@@ -79,6 +79,10 @@ export interface Venta {
   // momento de finalizar la venta o desde el historial. Es texto libre porque
   // varía según el sistema externo que lo emite.
   codigoBoleta?: string;
+  // Llaves de búsqueda por emprendedor: ids de emprendedor y prefijos
+  // ("PREF:BEND") presentes en las líneas. Permite a /alta traer solo las
+  // ventas del emprendedor con array-contains-any en vez de escanear todas.
+  empKeys?: string[];
 }
 
 // Cliente del cuaderno de fiados.

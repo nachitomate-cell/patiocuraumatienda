@@ -1,0 +1,33 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "cajas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cerradaEn", "order": "ASCENDING" },
+        { "fieldPath": "aperturaEn", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "movimientos",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "negocioId", "order": "ASCENDING" },
+        { "fieldPath": "en", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ],
+      "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "ventas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "empKeys", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "creadoEn", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -30,6 +30,7 @@ import {
   actualizarProductoEmprendedor,
   eliminarProductoEmprendedor,
   movimientosDeEmprendedor,
+  movimientosNuevosDeEmprendedor,
   devolucionesEnRango,
 } from "@/lib/repo";
 import {
@@ -138,12 +139,29 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user, loading]);
 
-  // Refresca solo la bitácora (tras agregar/editar): evita releer ventas y
-  // catálogo cuando lo único que cambió es el log. Falla silenciosamente.
+  // Refresca solo la bitácora (tras agregar/editar). Incremental: pide solo
+  // los movimientos posteriores al más nuevo ya cargado (1-2 lecturas por
+  // acción, en vez de volver a pagar los 100 más recientes cada vez — una
+  // sesión cargando 20 productos pasaba de ~2.000 lecturas a ~40 con esto).
+  // Falla silenciosamente: el log es accesorio.
   async function refrescarHistorial(empId: string) {
     try {
-      const ms = await movimientosDeEmprendedor(empId, 100);
-      setMovs(ms);
+      const masNuevo = movs[0]?.en;
+      if (!masNuevo) {
+        setMovs(await movimientosDeEmprendedor(empId, 100));
+        return;
+      }
+      const nuevos = await movimientosNuevosDeEmprendedor(empId, masNuevo);
+      if (nuevos.length === 0) return;
+      setMovs((prev) => {
+        // Dedupe por (en, accion, codigo): dos acciones muy seguidas pueden
+        // disparar refrescos solapados con el mismo punto de partida.
+        const vistos = new Set(prev.map((m) => `${m.en}|${m.accion}|${m.codigo || ""}`));
+        const frescos = nuevos.filter(
+          (m) => !vistos.has(`${m.en}|${m.accion}|${m.codigo || ""}`)
+        );
+        return frescos.length ? [...frescos, ...prev] : prev;
+      });
     } catch {
       // no-op
     }
@@ -255,7 +273,10 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         emp,
         { descripcion, precio: precioN, stock: stockN, vence, codigo: codigoCustom },
         "emprendedor",
-        emp.nombre
+        emp.nombre,
+        // El inventario ya cargado sirve de pista de códigos ocupados: evita
+        // que el backend consulte todo el prefijo en cada alta.
+        productos.map((p) => p.codigo)
       );
       setMsg(`✅ "${descripcion}" agregado (código ${cod}).`);
       setProductos((prev) =>
