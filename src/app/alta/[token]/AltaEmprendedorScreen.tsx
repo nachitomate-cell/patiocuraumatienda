@@ -219,6 +219,23 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     return { unidades, totalVendido, nVentas, stockTotal, ingresoHoy, ingresoMes };
   }, [ventas, productos]);
 
+  // Próximo correlativo sugerido para el placeholder de código. El contador
+  // productosCount puede quedar por debajo de los códigos reales (seed inicial
+  // impreciso, imports masivos), así que se toma también el mayor correlativo
+  // PREFIJO-NNNN presente en el inventario cargado. Los productos agregados en
+  // esta sesión ya entran a `productos` con su código real, por eso el máximo
+  // con `extrasEnSesion` no double-cuenta.
+  const proximoSugerido = useMemo(() => {
+    if (!emp) return 1;
+    let maxN = (emp.productosCount || 0) + extrasEnSesion;
+    const re = new RegExp(`^${emp.prefijo}-(\\d+)$`);
+    for (const p of productos) {
+      const m = (p.codigo || "").match(re);
+      if (m) maxN = Math.max(maxN, Number(m[1]));
+    }
+    return maxN + 1;
+  }, [emp, productos, extrasEnSesion]);
+
   // ===== Alta =====
   async function agregar() {
     if (!emp) return;
@@ -1029,9 +1046,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                 onChange={(e) => setCodigoCustom(e.target.value.toUpperCase())}
                 placeholder={
                   emp
-                    ? `Sugerido: ${emp.prefijo}-${String(
-                        (emp.productosCount || 0) + extrasEnSesion + 1
-                      ).padStart(4, "0")}`
+                    ? `Sugerido: ${emp.prefijo}-${String(proximoSugerido).padStart(4, "0")}`
                     : ""
                 }
                 className="mt-1 w-full border rounded-lg px-3 py-2.5 font-mono uppercase"

@@ -859,6 +859,29 @@ export async function agregarProductoEmprendedor(
   const empRef = tdoc(EMPRENDEDORES, emp.id);
   const vence = (datos.vence || "").trim();
   const codigoPedido = (datos.codigo || "").trim();
+
+  // Piso real para auto-generar: el mayor correlativo PREFIJO-NNNN que ya
+  // exista como documento. productosCount puede quedar muy por debajo de la
+  // realidad (seed inicial impreciso, imports masivos), y el bucle defensivo
+  // de la transacción aborta tras 50 choques seguidos. Se consulta por ID de
+  // documento —no por campo codigo— para cubrir docs legacy sin ese campo y
+  // soft-eliminados, cuyos docs siguen ocupando el código.
+  let pisoExistente = 0;
+  if (!codigoPedido) {
+    const snapCods = await getDocs(
+      query(
+        tcol(PRODUCTOS),
+        where(documentId(), ">=", `${emp.prefijo}-`),
+        where(documentId(), "<=", `${emp.prefijo}-${String.fromCharCode(0xf8ff)}`)
+      )
+    );
+    const reCanon = new RegExp(`^${emp.prefijo}-(\\d+)$`);
+    for (const d of snapCods.docs) {
+      const m = d.id.match(reCanon);
+      if (m) pisoExistente = Math.max(pisoExistente, Number(m[1]));
+    }
+  }
+
   const codigo = await runTransaction(db, async (tx) => {
     const s = await tx.get(empRef);
     const curCount = (s.exists() ? (s.data().productosCount as number) || 0 : 0);
@@ -887,11 +910,11 @@ export async function agregarProductoEmprendedor(
         if (n > curCount) nuevoCount = n;
       }
     } else {
-      nuevoCount = curCount + 1;
+      // Arrancar desde el máximo entre el contador y lo que realmente existe
+      // en el catálogo; el bucle queda solo como defensa ante altas
+      // concurrentes (docs creados entre la consulta del piso y esta tx).
+      nuevoCount = Math.max(curCount, pisoExistente) + 1;
       cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
-      // Defensa: si por alguna razón el slot auto está tomado (porque alguien
-      // usó código manual igual al próximo numérico), avanzamos y reintentamos
-      // hasta encontrar un hueco. Cap a 50 iteraciones para evitar loops.
       for (let i = 0; i < 50; i++) {
         const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
         if (!snapProd.exists()) break;
