@@ -846,9 +846,9 @@ export async function getEmprendedorPorToken(
 // origen distingue si lo cargó el propio emprendedor (/alta) o un admin (POS).
 // codigo (opcional): si viene, se usa el código que el emprendedor escribió en
 // vez de auto-generar. Debe normalizar a `${prefijo}-...` y no chocar con un
-// código existente. Si encaja en el patrón `${prefijo}-NNNN` con N mayor al
-// productosCount actual, avanzamos el contador para que la auto-generación
-// futura no caiga sobre un código ya tomado manualmente.
+// código existente. Los códigos manuales NUNCA mueven productosCount: el
+// contador sigue solo la secuencia automática, y la auto-generación esquiva
+// los códigos manuales consultando lo que realmente existe.
 export async function agregarProductoEmprendedor(
   emp: Emprendedor,
   datos: { descripcion: string; precio: number; costo?: number; stock?: number; vence?: string; codigo?: string },
@@ -860,13 +860,15 @@ export async function agregarProductoEmprendedor(
   const vence = (datos.vence || "").trim();
   const codigoPedido = (datos.codigo || "").trim();
 
-  // Piso real para auto-generar: el mayor correlativo PREFIJO-NNNN que ya
-  // exista como documento. productosCount puede quedar muy por debajo de la
-  // realidad (seed inicial impreciso, imports masivos), y el bucle defensivo
-  // de la transacción aborta tras 50 choques seguidos. Se consulta por ID de
-  // documento —no por campo codigo— para cubrir docs legacy sin ese campo y
-  // soft-eliminados, cuyos docs siguen ocupando el código.
-  let pisoExistente = 0;
+  // Correlativos ya ocupados por documentos reales. La auto-generación toma
+  // el PRIMER hueco libre desde el contador, saltando de a uno sobre este set
+  // en memoria: así los códigos manuales fuera de serie (p.ej. BEND-03381
+  // tipeado a mano) no arrastran la secuencia, y tampoco importa que el
+  // contador esté por debajo de la realidad (seed impreciso, imports). Se
+  // consulta por ID de documento —no por campo codigo— para cubrir docs
+  // legacy sin ese campo y soft-eliminados, cuyos docs siguen ocupando el
+  // código. Number() normaliza ceros a la izquierda ("03381" → 3381).
+  const tomados = new Set<number>();
   if (!codigoPedido) {
     const snapCods = await getDocs(
       query(
@@ -878,7 +880,7 @@ export async function agregarProductoEmprendedor(
     const reCanon = new RegExp(`^${emp.prefijo}-(\\d+)$`);
     for (const d of snapCods.docs) {
       const m = d.id.match(reCanon);
-      if (m) pisoExistente = Math.max(pisoExistente, Number(m[1]));
+      if (m) tomados.add(Number(m[1]));
     }
   }
 
@@ -902,23 +904,25 @@ export async function agregarProductoEmprendedor(
       if (snapProd.exists()) {
         throw new Error(`Ya existe un producto con el código ${cod}.`);
       }
-      // Si el código tiene formato canónico PREFIJO-NNNN, avanzamos el
-      // contador para no chocar después en auto-generación.
-      const m = cod.match(new RegExp(`^${emp.prefijo}-(\\d+)$`));
-      if (m) {
-        const n = Number(m[1]);
-        if (n > curCount) nuevoCount = n;
-      }
+      // Ojo: NO se mueve productosCount aquí. Un código manual alto (p.ej.
+      // BEND-3381) arrastraría la secuencia automática hasta ahí; el set
+      // `tomados` ya garantiza que la auto-generación no choque con él.
     } else {
-      // Arrancar desde el máximo entre el contador y lo que realmente existe
-      // en el catálogo; el bucle queda solo como defensa ante altas
-      // concurrentes (docs creados entre la consulta del piso y esta tx).
-      nuevoCount = Math.max(curCount, pisoExistente) + 1;
+      // Primer correlativo libre después del contador. El set cubre todo lo
+      // existente al momento de la consulta; el bucle con tx.get queda como
+      // defensa ante altas concurrentes (docs creados entre esa consulta y
+      // esta transacción), donde bastan uno o dos saltos extra.
+      nuevoCount = curCount;
+      do {
+        nuevoCount++;
+      } while (tomados.has(nuevoCount));
       cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
       for (let i = 0; i < 50; i++) {
         const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
         if (!snapProd.exists()) break;
-        nuevoCount++;
+        do {
+          nuevoCount++;
+        } while (tomados.has(nuevoCount));
         cod = `${emp.prefijo}-${String(nuevoCount).padStart(4, "0")}`;
         if (i === 49) throw new Error("No pude generar un código libre.");
       }

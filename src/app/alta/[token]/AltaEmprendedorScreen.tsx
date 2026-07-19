@@ -65,11 +65,8 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [stock, setStock] = useState(1);
   const [vence, setVence] = useState("");
   // Código personalizado opcional. Si queda vacío, el backend auto-genera
-  // PREFIJO-NNNN; si lo escribe, valida formato y unicidad. Se trackea
-  // `extrasEnSesion` para que el sugerido en placeholder avance localmente
-  // tras cada alta sin refetch del emprendedor.
+  // PREFIJO-NNNN; si lo escribe, valida formato y unicidad.
   const [codigoCustom, setCodigoCustom] = useState("");
-  const [extrasEnSesion, setExtrasEnSesion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -219,22 +216,26 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     return { unidades, totalVendido, nVentas, stockTotal, ingresoHoy, ingresoMes };
   }, [ventas, productos]);
 
-  // Próximo correlativo sugerido para el placeholder de código. El contador
-  // productosCount puede quedar por debajo de los códigos reales (seed inicial
-  // impreciso, imports masivos), así que se toma también el mayor correlativo
-  // PREFIJO-NNNN presente en el inventario cargado. Los productos agregados en
-  // esta sesión ya entran a `productos` con su código real, por eso el máximo
-  // con `extrasEnSesion` no double-cuenta.
+  // Próximo correlativo sugerido para el placeholder de código: primer hueco
+  // libre después del contador, saltando los correlativos ya presentes en el
+  // inventario cargado. Mismo criterio que la auto-generación del backend
+  // (agregarProductoEmprendedor): los códigos manuales fuera de serie no
+  // arrastran la secuencia. Los productos agregados en esta sesión ya entran
+  // a `productos` con su código real, así que el sugerido avanza solo.
   const proximoSugerido = useMemo(() => {
     if (!emp) return 1;
-    let maxN = (emp.productosCount || 0) + extrasEnSesion;
     const re = new RegExp(`^${emp.prefijo}-(\\d+)$`);
+    const tomados = new Set<number>();
     for (const p of productos) {
       const m = (p.codigo || "").match(re);
-      if (m) maxN = Math.max(maxN, Number(m[1]));
+      if (m) tomados.add(Number(m[1]));
     }
-    return maxN + 1;
-  }, [emp, productos, extrasEnSesion]);
+    let n = emp.productosCount || 0;
+    do {
+      n++;
+    } while (tomados.has(n));
+    return n;
+  }, [emp, productos]);
 
   // ===== Alta =====
   async function agregar() {
@@ -271,7 +272,6 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setStock(1);
       setVence("");
       setCodigoCustom("");
-      setExtrasEnSesion((x) => x + 1);
       refrescarHistorial(emp.id);
     } catch (e) {
       // Si el backend rechaza el código (formato incorrecto, ya existe),
