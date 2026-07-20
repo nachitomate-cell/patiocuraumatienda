@@ -5,6 +5,7 @@ import Image from "next/image";
 import {
   Plus,
   Check,
+  ChevronDown,
   PackageCheck,
   Pencil,
   Trash2,
@@ -19,6 +20,7 @@ import {
   PackageMinus,
   AlertTriangle,
   Send,
+  Smartphone,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -71,6 +73,21 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [codigoCustom, setCodigoCustom] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  // Formulario de alta colapsado por defecto: agregar productos es la acción
+  // menos frecuente y desplegado empujaba el inventario una pantalla entera
+  // hacia abajo. Se abre solo para emprendedores sin productos (onboarding).
+  const [formAbierto, setFormAbierto] = useState(false);
+
+  // Filtro rápido del inventario: responder "¿qué tengo que reponer?" sin
+  // scrollear. "porvencer" agrupa vencidos + por vencer (estadoVence != null).
+  const [filtro, setFiltro] = useState<"todos" | "constock" | "agotados" | "porvencer">("todos");
+
+  // Banner "instala tu portal": en Android se captura beforeinstallprompt
+  // para disparar la instalación nativa; en iOS no existe el evento y se
+  // muestran instrucciones (Compartir → Agregar a pantalla de inicio).
+  type PromptInstalacion = Event & { prompt: () => Promise<void> };
+  const [instalarEvt, setInstalarEvt] = useState<PromptInstalacion | null>(null);
+  const [mostrarInstalar, setMostrarInstalar] = useState<"" | "android" | "ios">("");
 
   // Edición de un producto existente.
   const [editCodigo, setEditCodigo] = useState<string | null>(null);
@@ -139,6 +156,49 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user, loading]);
 
+  // Banner de instalación PWA. No se muestra si ya corre instalada
+  // (standalone) o si el emprendedor lo cerró antes.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (window.matchMedia("(display-mode: standalone)").matches) return;
+      if (localStorage.getItem("alta:instalar-cerrado") === "1") return;
+    } catch {
+      return;
+    }
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) {
+      setMostrarInstalar("ios");
+      return;
+    }
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setInstalarEvt(e as PromptInstalacion);
+      setMostrarInstalar("android");
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", onPrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function cerrarInstalar() {
+    setMostrarInstalar("");
+    try {
+      localStorage.setItem("alta:instalar-cerrado", "1");
+    } catch {
+      // sin localStorage: se volverá a ofrecer la próxima visita
+    }
+  }
+
+  async function instalarApp() {
+    if (!instalarEvt) return;
+    try {
+      await instalarEvt.prompt();
+    } catch {
+      // el usuario canceló el diálogo nativo
+    }
+    setMostrarInstalar("");
+  }
+
   // Refresca solo la bitácora (tras agregar/editar). Incremental: pide solo
   // los movimientos posteriores al más nuevo ya cargado (1-2 lecturas por
   // acción, en vez de volver a pagar los 100 más recientes cada vez — una
@@ -182,6 +242,9 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       setProductos(prods);
       setVentas(vs);
       setMovs(ms);
+      // Onboarding: si aún no tiene productos, lo primero que necesita es
+      // justamente el formulario de alta.
+      if (prods.length === 0) setFormAbierto(true);
     } finally {
       setCargandoDatos(false);
     }
@@ -209,6 +272,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     let unidades = 0;
     let totalVendido = 0;
     let nVentas = 0;
+    let nVentasHoy = 0;
     let ingresoHoy = 0;
     let ingresoMes = 0;
 
@@ -228,11 +292,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       const sub = v.items.reduce((s, l) => s + subtotalLinea(l), 0);
       totalVendido += sub;
       for (const l of v.items) unidades += l.cantidad;
-      if (v.creadoEn >= inicioHoy) ingresoHoy += sub;
+      if (v.creadoEn >= inicioHoy) {
+        ingresoHoy += sub;
+        nVentasHoy++;
+      }
       if (v.creadoEn >= inicioMes) ingresoMes += sub;
     }
     const stockTotal = productos.reduce((s, p) => s + (p.stockActual || 0), 0);
-    return { unidades, totalVendido, nVentas, stockTotal, ingresoHoy, ingresoMes };
+    return { unidades, totalVendido, nVentas, nVentasHoy, stockTotal, ingresoHoy, ingresoMes };
   }, [ventas, productos]);
 
   // Próximo correlativo sugerido para el placeholder de código: primer hueco
@@ -324,16 +391,31 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     setQuickCodigo(null);
   }
 
-  // Lista filtrada por el buscador. Match en código o descripción (case-insensitive).
+  // Conteos para los chips de filtro del inventario.
+  const conteosFiltro = useMemo(() => {
+    let agotados = 0;
+    let porVencer = 0;
+    for (const p of productos) {
+      if ((p.stockActual || 0) <= 0) agotados++;
+      if (estadoVence(p.vence)) porVencer++;
+    }
+    return { agotados, porVencer, conStock: productos.length - agotados };
+  }, [productos]);
+
+  // Lista filtrada por buscador + chip activo. Match en código o descripción.
   const productosFiltrados = useMemo(() => {
     const t = busqueda.trim().toLowerCase();
-    if (!t) return productos;
-    return productos.filter(
+    let lista = productos;
+    if (filtro === "constock") lista = lista.filter((p) => (p.stockActual || 0) > 0);
+    else if (filtro === "agotados") lista = lista.filter((p) => (p.stockActual || 0) <= 0);
+    else if (filtro === "porvencer") lista = lista.filter((p) => !!estadoVence(p.vence));
+    if (!t) return lista;
+    return lista.filter(
       (p) =>
         (p.codigo || "").toLowerCase().includes(t) ||
         (p.descripcion || "").toLowerCase().includes(t)
     );
-  }, [productos, busqueda]);
+  }, [productos, busqueda, filtro]);
 
   // ===== Ajuste rápido de stock (recibí / retiré) =====
   function abrirQuick(p: Producto, tipo: "in" | "out") {
@@ -966,6 +1048,32 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             </p>
           )}
 
+          {/* Respuesta inmediata a "¿vendí hoy?": el dato que todo emprendedor
+              viene a mirar primero, en grande y sin leer la grilla. */}
+          {totales.nVentasHoy > 0 ? (
+            <div className="mt-4 bg-emerald-50 border border-emerald-100 rounded-lg px-4 py-3">
+              <div className="text-[10px] uppercase tracking-wider text-emerald-600 font-semibold">
+                Hoy
+              </div>
+              <div className="text-2xl font-bold text-emerald-700">
+                {money(totales.ingresoHoy)}
+                <span className="ml-2 text-sm font-medium text-emerald-600">
+                  · {totales.nVentasHoy}{" "}
+                  {totales.nVentasHoy === 1 ? "venta" : "ventas"}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 bg-slate-50 border border-slate-100 rounded-lg px-4 py-3">
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                Hoy
+              </div>
+              <div className="text-sm font-medium text-slate-500">
+                Aún no hay ventas hoy
+              </div>
+            </div>
+          )}
+
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-2">
             <Mini label="Productos" valor={productos.length.toString()} />
             <Mini label="Stock total" valor={`${totales.stockTotal} u.`} />
@@ -976,12 +1084,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">
               Ingresos
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              <Mini
-                label="Hoy"
-                valor={money(totales.ingresoHoy)}
-                acento="emerald"
-              />
+            <div className="grid grid-cols-2 gap-2">
               <Mini
                 label="Este mes"
                 valor={money(totales.ingresoMes)}
@@ -991,6 +1094,45 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             </div>
           </div>
         </div>
+
+        {/* Banner "instala tu portal": con la app instalada el link con token
+            queda guardado como ícono y se acaba el problema de links
+            perdidos (o de terminar en el POS del local por error). */}
+        {mostrarInstalar && (
+          <div className="bg-slate-900 text-white rounded-xl shadow p-4 flex items-start gap-3 anim-in">
+            <Smartphone size={26} className="text-emerald-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0 text-sm">
+              <div className="font-semibold">Instala tu portal en el teléfono</div>
+              {mostrarInstalar === "android" ? (
+                <p className="text-slate-300 text-xs mt-0.5">
+                  Queda como app con tu acceso guardado: no necesitas buscar el
+                  link nunca más.
+                </p>
+              ) : (
+                <p className="text-slate-300 text-xs mt-0.5">
+                  En Safari toca <b>Compartir</b> y luego{" "}
+                  <b>&quot;Agregar a pantalla de inicio&quot;</b>: queda como
+                  app con tu acceso guardado.
+                </p>
+              )}
+              {mostrarInstalar === "android" && (
+                <button
+                  onClick={instalarApp}
+                  className="mt-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold rounded-lg px-4 py-2"
+                >
+                  Instalar
+                </button>
+              )}
+            </div>
+            <button
+              onClick={cerrarInstalar}
+              aria-label="Cerrar"
+              className="text-slate-400 hover:text-white p-1 shrink-0"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
 
         {/* Accesos rápidos: Ingreso / Retiro con buscador propio.
             Están arriba y grandes para que sean el primer gesto del turno
@@ -1019,12 +1161,25 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
           </button>
         </div>
 
-        {/* Alta de producto */}
+        {/* Alta de producto: colapsado por defecto (la acción menos
+            frecuente); el header completo es el toggle. */}
         <div className="bg-white rounded-xl shadow p-5 anim-in">
-          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+          <button
+            type="button"
+            onClick={() => setFormAbierto((v) => !v)}
+            aria-expanded={formAbierto}
+            className="w-full font-semibold text-slate-800 flex items-center gap-2"
+          >
             <Plus className="text-emerald-600" size={20} /> Cargar nuevo producto
-          </h2>
-          <div className="space-y-3">
+            <ChevronDown
+              size={18}
+              className={`ml-auto text-slate-400 transition-transform ${
+                formAbierto ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {formAbierto && (
+          <div className="space-y-3 mt-3">
             <label className="block text-sm">
               <span className="text-slate-600 font-medium">Nombre del producto</span>
               <input
@@ -1103,6 +1258,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Inventario editable */}
@@ -1112,28 +1268,58 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             {productos.length})
           </h2>
           {productos.length > 0 && (
-            <div className="relative mb-3">
-              <Search
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
-              />
-              <input
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-                placeholder="Buscar por nombre o código…"
-                className="w-full border rounded-lg pl-9 pr-9 py-2 text-sm"
-              />
-              {busqueda && (
-                <button
-                  type="button"
-                  onClick={() => setBusqueda("")}
-                  aria-label="Limpiar búsqueda"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
+            <>
+              {/* Chips de filtro: responder "¿qué repongo?" de un toque. */}
+              <div className="flex flex-wrap gap-1.5 mb-3">
+                {(
+                  [
+                    { k: "todos", txt: `Todos (${productos.length})` },
+                    { k: "constock", txt: `Con stock (${conteosFiltro.conStock})` },
+                    { k: "agotados", txt: `Agotados (${conteosFiltro.agotados})` },
+                    ...(conteosFiltro.porVencer > 0
+                      ? [{ k: "porvencer", txt: `Por vencer (${conteosFiltro.porVencer})` }]
+                      : []),
+                  ] as { k: typeof filtro; txt: string }[]
+                ).map((c) => (
+                  <button
+                    key={c.k}
+                    type="button"
+                    onClick={() => setFiltro(c.k)}
+                    className={`text-xs font-semibold rounded-full px-3 py-1.5 border ${
+                      filtro === c.k
+                        ? c.k === "agotados"
+                          ? "bg-red-600 border-red-600 text-white"
+                          : "bg-emerald-600 border-emerald-600 text-white"
+                        : "border-slate-300 text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    {c.txt}
+                  </button>
+                ))}
+              </div>
+              <div className="relative mb-3">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+                <input
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  placeholder="Buscar por nombre o código…"
+                  className="w-full border rounded-lg pl-9 pr-9 py-2 text-sm"
+                />
+                {busqueda && (
+                  <button
+                    type="button"
+                    onClick={() => setBusqueda("")}
+                    aria-label="Limpiar búsqueda"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </>
           )}
           {cargandoDatos && productos.length === 0 ? (
             <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
@@ -1143,7 +1329,13 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             </p>
           ) : productosFiltrados.length === 0 ? (
             <p className="text-slate-400 text-sm py-3 text-center">
-              Ningún producto coincide con &quot;{busqueda}&quot;.
+              {busqueda.trim()
+                ? `Ningún producto coincide con "${busqueda}".`
+                : filtro === "agotados"
+                ? "No tienes productos agotados. 🎉"
+                : filtro === "porvencer"
+                ? "Nada por vencer."
+                : "Ningún producto coincide con el filtro."}
             </p>
           ) : (
             <ul className="divide-y">
@@ -1227,13 +1419,23 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
                         <div className="font-medium text-slate-800 truncate">
                           {p.descripcion}
                         </div>
-                        <div className="text-xs text-slate-500 flex flex-wrap gap-x-2 items-center">
+                        <div className="text-xs text-slate-500 flex flex-wrap gap-x-2 gap-y-0.5 items-center">
                           <span className="font-mono">{p.codigo}</span>
                           <span>· {p.stockActual} u.</span>
                           <span>· {money(p.precio)}</span>
                           {stats.unidades > 0 && (
                             <span className="text-emerald-700">
                               · vendidas {stats.unidades}
+                            </span>
+                          )}
+                          {(p.stockActual || 0) === 0 && (
+                            <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-red-100 text-red-700">
+                              AGOTADO
+                            </span>
+                          )}
+                          {(p.stockActual || 0) < 0 && (
+                            <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-red-600 text-white">
+                              ⚠ STOCK NEGATIVO
                             </span>
                           )}
                           {ev && (
