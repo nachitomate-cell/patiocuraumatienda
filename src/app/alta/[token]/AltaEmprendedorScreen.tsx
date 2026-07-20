@@ -77,6 +77,12 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   // menos frecuente y desplegado empujaba el inventario una pantalla entera
   // hacia abajo. Se abre solo para emprendedores sin productos (onboarding).
   const [formAbierto, setFormAbierto] = useState(false);
+  // Secciones colapsables. Inventario abierto por defecto (es la sección de
+  // trabajo); ventas e historial plegadas: son consulta ocasional y el hero
+  // de "Hoy" ya responde lo urgente.
+  const [inventarioAbierto, setInventarioAbierto] = useState(true);
+  const [ventasAbiertas, setVentasAbiertas] = useState(false);
+  const [historialAbierto, setHistorialAbierto] = useState(false);
 
   // Filtro rápido del inventario: responder "¿qué tengo que reponer?" sin
   // scrollear. "porvencer" agrupa vencidos + por vencer (estadoVence != null).
@@ -1263,10 +1269,23 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
 
         {/* Inventario editable */}
         <div className="bg-white rounded-xl shadow p-5 anim-in">
-          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+          <button
+            type="button"
+            onClick={() => setInventarioAbierto((v) => !v)}
+            aria-expanded={inventarioAbierto}
+            className="w-full font-semibold text-slate-800 flex items-center gap-2"
+          >
             <PackageCheck className="text-emerald-600" size={20} /> Mi inventario (
             {productos.length})
-          </h2>
+            <ChevronDown
+              size={18}
+              className={`ml-auto text-slate-400 transition-transform ${
+                inventarioAbierto ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {inventarioAbierto && (
+          <div className="mt-3">
           {productos.length > 0 && (
             <>
               {/* Chips de filtro: responder "¿qué repongo?" de un toque. */}
@@ -1533,14 +1552,29 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
               })}
             </ul>
           )}
+          </div>
+          )}
         </div>
 
         {/* Ventas */}
         <div className="bg-white rounded-xl shadow p-5 anim-in">
-          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+          <button
+            type="button"
+            onClick={() => setVentasAbiertas((v) => !v)}
+            aria-expanded={ventasAbiertas}
+            className="w-full font-semibold text-slate-800 flex items-center gap-2"
+          >
             <ShoppingBag className="text-cyan-600" size={20} /> Mis ventas (
             {totales.nVentas})
-          </h2>
+            <ChevronDown
+              size={18}
+              className={`ml-auto text-slate-400 transition-transform ${
+                ventasAbiertas ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {ventasAbiertas && (
+          <div className="mt-3">
           {cargandoDatos && ventas.length === 0 ? (
             <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
           ) : ventas.length === 0 ? (
@@ -1593,14 +1627,29 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
               })}
             </ul>
           )}
+          </div>
+          )}
         </div>
 
         {/* Historial de cambios */}
         <div className="bg-white rounded-xl shadow p-5 anim-in">
-          <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-3">
+          <button
+            type="button"
+            onClick={() => setHistorialAbierto((v) => !v)}
+            aria-expanded={historialAbierto}
+            className="w-full font-semibold text-slate-800 flex items-center gap-2"
+          >
             <History className="text-violet-600" size={20} /> Historial de cambios (
             {movs.length})
-          </h2>
+            <ChevronDown
+              size={18}
+              className={`ml-auto text-slate-400 transition-transform ${
+                historialAbierto ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {historialAbierto && (
+          <div className="mt-3">
           {cargandoDatos && movs.length === 0 ? (
             <p className="text-slate-400 text-sm py-3 text-center">Cargando…</p>
           ) : (
@@ -1608,6 +1657,8 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
               movs={movs}
               vacio="Aún no hay movimientos registrados."
             />
+          )}
+          </div>
           )}
         </div>
 
