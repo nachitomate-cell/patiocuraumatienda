@@ -55,7 +55,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const { user, loading } = useAuth();
   const NEGOCIO = useNegocio();
   const [emp, setEmp] = useState<Emprendedor | null>(null);
-  const [estado, setEstado] = useState<"cargando" | "ok" | "invalido" | "inactivo">("cargando");
+  // "invalido" = el token no corresponde a ningún emprendedor (respuesta real
+  // del servidor). "error" = no se pudo consultar (sin señal, Firestore caído):
+  // NUNCA mostrar "link no válido" por un problema de red.
+  const [estado, setEstado] = useState<"cargando" | "ok" | "invalido" | "inactivo" | "error">("cargando");
+  const [reintento, setReintento] = useState(0);
+  // Falla al cargar productos/ventas con el token ya validado: banner con
+  // reintento, manteniendo el portal utilizable.
+  const [errorDatos, setErrorDatos] = useState(false);
 
   // Estado del servidor (productos + ventas + bitácora del emprendedor).
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -155,12 +162,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         setEstado("ok");
         await cargarDatos(e);
       })
-      .catch(() => vivo && setEstado("invalido"));
+      // Aquí solo cae la consulta del token (cargarDatos captura lo suyo):
+      // si falló la RED no es un link inválido, es un error transitorio.
+      .catch(() => vivo && setEstado("error"));
     return () => {
       vivo = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, user, loading]);
+  }, [token, user, loading, reintento]);
 
   // Banner de instalación PWA. No se muestra si ya corre instalada
   // (standalone) o si el emprendedor lo cerró antes.
@@ -235,6 +244,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
 
   async function cargarDatos(e: Emprendedor) {
     setCargandoDatos(true);
+    setErrorDatos(false);
     try {
       // Pasamos id + prefijo: la query usa AMBOS para alcanzar productos
       // legacy migrados sin emprendedorId estampado.
@@ -244,13 +254,18 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
         ventasDeEmprendedor(target),
         movimientosDeEmprendedor(e.id, 100),
       ]);
-      prods.sort((a, b) => a.codigo.localeCompare(b.codigo));
+      // (codigo || ""): hay docs legacy sin el campo; un solo undefined aquí
+      // tumbaría la carga completa del portal.
+      prods.sort((a, b) => (a.codigo || "").localeCompare(b.codigo || ""));
       setProductos(prods);
       setVentas(vs);
       setMovs(ms);
       // Onboarding: si aún no tiene productos, lo primero que necesita es
       // justamente el formulario de alta.
       if (prods.length === 0) setFormAbierto(true);
+    } catch {
+      // Red o Firestore caído: banner con reintento; el portal sigue en pie.
+      setErrorDatos(true);
     } finally {
       setCargandoDatos(false);
     }
@@ -365,7 +380,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             ...(vence ? { vence } : {}),
           } as Producto,
           ...prev,
-        ].sort((a, b) => a.codigo.localeCompare(b.codigo))
+        ].sort((a, b) => (a.codigo || "").localeCompare(b.codigo || ""))
       );
       setDescripcion("");
       setPrecio(0);
@@ -986,6 +1001,26 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
     );
   }
 
+  if (estado === "error") {
+    return (
+      <div className="mx-auto max-w-md mt-20 bg-white rounded-xl shadow p-6 text-center">
+        <h1 className="text-lg font-bold text-slate-900">No pudimos cargar tu portal</h1>
+        <p className="text-slate-500 mt-2 text-sm">
+          Parece un problema de conexión. Revisa tu internet e inténtalo de nuevo.
+        </p>
+        <button
+          onClick={() => {
+            setEstado("cargando");
+            setReintento((n) => n + 1);
+          }}
+          className="mt-4 inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-4 py-2"
+        >
+          <RefreshCw size={16} /> Reintentar
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen">
       <header className="bg-slate-900 text-white">
@@ -1001,6 +1036,22 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
       </header>
 
       <main className="mx-auto max-w-3xl px-4 py-6 space-y-4">
+        {/* Falla de red al cargar datos con token válido: aviso honesto con
+            reintento en vez de listas vacías sin explicación. */}
+        {errorDatos && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl shadow px-4 py-3 text-sm flex items-center justify-between gap-3 anim-in">
+            <span>No pudimos cargar tus datos. Revisa tu conexión.</span>
+            <button
+              onClick={() => emp && cargarDatos(emp)}
+              disabled={cargandoDatos}
+              className="shrink-0 flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg px-3 py-2 disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={cargandoDatos ? "animate-spin" : ""} />
+              Reintentar
+            </button>
+          </div>
+        )}
+
         {/* Bienvenida + resumen */}
         <div className="bg-white rounded-xl shadow p-5 anim-in">
           <div className="flex items-start justify-between flex-wrap gap-3">
@@ -1258,12 +1309,14 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
             >
               <Plus size={20} /> {busy ? "Guardando…" : "Agregar producto"}
             </button>
-            {msg && (
-              <div className="text-sm rounded-lg bg-slate-100 border border-slate-200 px-3 py-2 anim-pop">
-                {msg}
-              </div>
-            )}
           </div>
+          )}
+          {/* Fuera del colapsable: también confirma la eliminación de un
+              producto, que ocurre con el formulario cerrado. */}
+          {msg && (
+            <div className="mt-3 text-sm rounded-lg bg-slate-100 border border-slate-200 px-3 py-2 anim-pop">
+              {msg}
+            </div>
           )}
         </div>
 
