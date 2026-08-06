@@ -122,6 +122,9 @@ export function HistorialScreen() {
     prefijo: string;
     items: IngresoEmprendedor[];
   } | null>(null);
+  // createPortal necesita document: en SSR no existe. Se monta en cliente.
+  const [montado, setMontado] = useState(false);
+  useEffect(() => setMontado(true), []);
 
   async function cargarIngresos(
     modo: "dia" | "mes" | "rango" = periodoIng,
@@ -1501,7 +1504,7 @@ export function HistorialScreen() {
               Imprime dos copias: una firmada queda en el local y la otra se la
               lleva el emprendedor.
             </p>
-            <div className="max-h-[60vh] overflow-y-auto border rounded-lg p-2 bg-slate-50 no-print">
+            <div className="max-h-[60vh] overflow-y-auto border rounded-lg p-2 bg-slate-50">
               <ComprobanteMovimientos
                 id=""
                 emprendedorNombre={comprobante.nombre}
@@ -1511,17 +1514,7 @@ export function HistorialScreen() {
                 recibidoPor={vendedor}
               />
             </div>
-            {/* Copia real de impresión (oculta en pantalla). */}
-            <div className="solo-impresion">
-              <ComprobanteMovimientos
-                emprendedorNombre={comprobante.nombre}
-                emprendedorPrefijo={comprobante.prefijo}
-                items={comprobante.items}
-                periodo={etiquetaPeriodoIng}
-                recibidoPor={vendedor}
-              />
-            </div>
-            <div className="flex items-center justify-end gap-2 no-print">
+            <div className="flex items-center justify-end gap-2">
               <button
                 onClick={() => setComprobante(null)}
                 className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100"
@@ -1538,6 +1531,25 @@ export function HistorialScreen() {
           </div>
         )}
       </Modal>
+
+      {/* Copia real de impresión, montada como PORTAL en <body>: mismo
+          patrón que la reimpresión de boleta. El wrapper del Modal tiene
+          `no-print` (display:none !important al imprimir), así que una copia
+          dentro de él se colapsa y la hoja sale en blanco. El portal escapa
+          de ese subárbol y de cualquier ancestro fixed/overflow. */}
+      {montado && comprobante &&
+        createPortal(
+          <div className="solo-impresion">
+            <ComprobanteMovimientos
+              emprendedorNombre={comprobante.nombre}
+              emprendedorPrefijo={comprobante.prefijo}
+              items={comprobante.items}
+              periodo={etiquetaPeriodoIng}
+              recibidoPor={vendedor}
+            />
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

@@ -1129,6 +1129,9 @@ export async function agregarProductoEmprendedor(
 
       let cod: string;
       let nuevoCount = curCount;
+      // True cuando el código pedido correspondía a un producto eliminado y
+      // se está reutilizando: hay que limpiar los campos del anterior.
+      let reactivado = false;
 
       if (codigoPedido) {
         // Solo dígitos => el emprendedor escribió el correlativo a secas
@@ -1142,11 +1145,23 @@ export async function agregarProductoEmprendedor(
             `El código debe empezar con "${emp.prefijo}-" (tu prefijo de emprendedor).`
           );
         }
-        // Conflict check: si ya existe un producto con ese código, no lo
+        // Conflict check: si ya existe un producto VIVO con ese código, no lo
         // pisamos. tx.get dentro de la transacción garantiza atomicidad.
+        //
+        // Si el doc existe pero está soft-eliminado, el código se reutiliza:
+        // el producto ya no está en el catálogo ni en el inventario del
+        // emprendedor, así que bloquearlo dejaba el código "quemado" para
+        // siempre con un mensaje incomprensible ("ya existe" sobre algo que
+        // no se ve en ninguna pantalla). Se sobrescribe con los datos nuevos
+        // y se resetean los acumulados: es otro producto ocupando el código,
+        // y las ventas históricas conservan su propio snapshot.
         const snapProd = await tx.get(tdoc(PRODUCTOS, cod));
         if (snapProd.exists()) {
-          throw new Error(`Ya existe un producto con el código ${cod}.`);
+          const prev = snapProd.data() as Producto;
+          if (!prev.eliminado) {
+            throw new Error(`Ya existe un producto con el código ${cod}.`);
+          }
+          reactivado = true;
         }
         // Ojo: NO se mueve productosCount aquí. Un código manual alto (p.ej.
         // BEND-3381) arrastraría la secuencia automática hasta ahí; el set
@@ -1189,6 +1204,15 @@ export async function agregarProductoEmprendedor(
         ingresadasTotal: stockN,
       };
       if (vence) docProd.vence = vence;
+      if (reactivado) {
+        // Reutilización de un código liberado: los acumulados del producto
+        // anterior no son de este. `eliminado`/`eliminadoEn` no se copian:
+        // el set sin merge reemplaza el doc entero y desaparecen solos.
+        docProd.vendidasTotal = 0;
+        docProd.egresadasTotal = 0;
+      }
+      // set sin merge: el doc queda exactamente con estos campos, sin
+      // arrastrar restos (lote, barcode, vence) del producto reemplazado.
       tx.set(tdoc(PRODUCTOS, cod), docProd);
       return cod;
     });

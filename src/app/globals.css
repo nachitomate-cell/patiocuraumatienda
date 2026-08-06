@@ -453,6 +453,13 @@ thead th {
   @page {
     margin: 6mm;
   }
+  /* El Modal fija overflow:hidden en el body por estilo inline mientras
+     está abierto; sin esto el navegador recorta la hoja y sale en blanco. */
+  html,
+  body {
+    overflow: visible !important;
+    height: auto !important;
+  }
   body * {
     visibility: hidden;
   }
