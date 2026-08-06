@@ -593,6 +593,9 @@ export async function confirmarVenta(
     if (l.manual || !l.codigo) continue;
     batch.update(tdoc(PRODUCTOS, l.codigo), {
       stockActual: increment(-l.cantidad),
+      // Acumulado histórico de unidades vendidas: viaja en el mismo update
+      // que el stock, así que no agrega costo. Lo revierten anular/devolver.
+      vendidasTotal: increment(l.cantidad),
       actualizadoEn: Date.now(),
     });
   }
@@ -1847,6 +1850,8 @@ export async function anularVenta(
     if (l.manual || !l.codigo) continue;
     batch.update(tdoc(PRODUCTOS, l.codigo), {
       stockActual: increment(l.cantidad),
+      // La venta se deshace: el acumulado de vendidas también.
+      vendidasTotal: increment(-l.cantidad),
       actualizadoEn: Date.now(),
     });
   }
@@ -1958,6 +1963,8 @@ export async function registrarDevolucion(
     if (l.manual || !l.codigo) continue;
     batch.update(tdoc(PRODUCTOS, l.codigo), {
       stockActual: increment(l.cantidad),
+      // Unidades devueltas dejan de contar como vendidas.
+      vendidasTotal: increment(-l.cantidad),
       actualizadoEn: Date.now(),
     });
   }

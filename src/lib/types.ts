@@ -20,6 +20,12 @@ export interface Producto {
   // TODAS las rutas que escriben productos lo estampan: es la base de la
   // sincronización delta del catálogo (ver todosLosProductos en repo.ts).
   actualizadoEn?: number;
+  // Unidades vendidas acumuladas (histórico). Se mantiene con increment() en
+  // el MISMO batch que descuenta stock, así que no cuesta lecturas ni
+  // escrituras extra; anulaciones y devoluciones lo revierten. Permite
+  // mostrar "cuánto se ha vendido" en el inventario sin leer la colección
+  // de ventas. Backfill: scripts/backfill-vendidas.mjs.
+  vendidasTotal?: number;
 }
 
 // Emprendedor que deja productos en consignación.

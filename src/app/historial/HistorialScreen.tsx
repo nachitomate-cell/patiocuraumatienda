@@ -6,6 +6,7 @@ import {
   History,
   Search,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Download,
   RefreshCw,
@@ -52,6 +53,11 @@ import { Modal } from "@/components/Modal";
 import { useNegocio } from "@/lib/negocio-context";
 import { useVendedor } from "@/lib/vendedor";
 
+const MESES_ING = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
 export function HistorialScreen() {
   const NEGOCIO = useNegocio();
   const vendedor = useVendedor();
@@ -69,22 +75,44 @@ export function HistorialScreen() {
   const [descargando, setDescargando] = useState<"diario" | "semanal" | null>(null);
   const [reporteErr, setReporteErr] = useState("");
 
-  // Sección "Ingresos del día": eventos de alta y reposición que llegan vía
-  // /alta/{token}. Se carga por separado del historial de ventas y permite
-  // navegar otros días con el selector de fecha.
+  // Sección "Ingresos de emprendedores": eventos de alta y reposición que
+  // llegan vía /alta/{token}. Se carga por separado del historial de ventas.
+  // periodoIng: "dia" navega una fecha puntual; "mes" trae el mes completo
+  // (para revisar la liquidación mensual de un emprendedor de una sola vez).
+  const [periodoIng, setPeriodoIng] = useState<"dia" | "mes">("dia");
   const [fechaIng, setFechaIng] = useState(hoyISO());
+  const [mesIng, setMesIng] = useState(hoyISO().slice(0, 7)); // YYYY-MM
   const [ingresos, setIngresos] = useState<IngresoEmprendedor[]>([]);
   const [cargandoIng, setCargandoIng] = useState(true);
   const [errorIng, setErrorIng] = useState("");
 
-  async function cargarIngresos(fecha: string) {
+  // Filtros en memoria sobre lo ya cargado (no cuestan lecturas extra).
+  const [empIng, setEmpIng] = useState("");            // id de emprendedor
+  const [tipoIng, setTipoIng] = useState<"" | "alta" | "reposicion">("");
+  const [origenIng, setOrigenIng] = useState<"" | "emprendedor" | "admin">("");
+  const [termIng, setTermIng] = useState("");           // código o descripción
+
+  async function cargarIngresos(
+    modo: "dia" | "mes" = periodoIng,
+    fecha: string = fechaIng,
+    mes: string = mesIng
+  ) {
     setCargandoIng(true);
     setErrorIng("");
     try {
-      // Rango [00:00:00, 23:59:59.999] en horario local de la fecha.
-      const [y, m, d] = fecha.split("-").map(Number);
-      const desde = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-      const hasta = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+      let desde: number;
+      let hasta: number;
+      if (modo === "mes") {
+        // Rango [primer día 00:00, último día 23:59:59.999] en hora local.
+        const [y, m] = mes.split("-").map(Number);
+        desde = new Date(y, m - 1, 1, 0, 0, 0, 0).getTime();
+        hasta = new Date(y, m, 0, 23, 59, 59, 999).getTime();
+      } else {
+        // Rango [00:00:00, 23:59:59.999] en horario local de la fecha.
+        const [y, m, d] = fecha.split("-").map(Number);
+        desde = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+        hasta = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+      }
       const items = await ingresosDeEmprendedoresEnRango(desde, hasta);
       setIngresos(items);
     } catch (e) {
@@ -99,22 +127,62 @@ export function HistorialScreen() {
   }
 
   useEffect(() => {
-    cargarIngresos(fechaIng);
-  }, [fechaIng]);
+    cargarIngresos(periodoIng, fechaIng, mesIng);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodoIng, fechaIng, mesIng]);
 
+  // Emprendedores presentes en el periodo cargado, para poblar el selector
+  // solo con quienes efectivamente movieron stock (no los 53 del negocio).
+  const empsEnIngresos = useMemo(() => {
+    const m = new Map<string, { nombre: string; prefijo: string; n: number; unidades: number }>();
+    for (const x of ingresos) {
+      const e = m.get(x.emprendedorId) || {
+        nombre: x.emprendedorNombre,
+        prefijo: x.emprendedorPrefijo,
+        n: 0,
+        unidades: 0,
+      };
+      e.n++;
+      e.unidades += x.cantidad;
+      m.set(x.emprendedorId, e);
+    }
+    return [...m.entries()].sort((a, b) => a[1].nombre.localeCompare(b[1].nombre));
+  }, [ingresos]);
+
+  const ingresosFiltrados = useMemo(() => {
+    const t = termIng.trim().toLowerCase();
+    return ingresos.filter((x) => {
+      if (empIng && x.emprendedorId !== empIng) return false;
+      if (tipoIng === "alta" && x.tipo !== "alta") return false;
+      if (tipoIng === "reposicion" && x.tipo === "alta") return false;
+      if (origenIng && x.origen !== origenIng) return false;
+      if (
+        t &&
+        !(x.codigo || "").toLowerCase().includes(t) &&
+        !(x.descripcion || "").toLowerCase().includes(t)
+      )
+        return false;
+      return true;
+    });
+  }, [ingresos, empIng, tipoIng, origenIng, termIng]);
+
+  const hayFiltrosIng = !!(empIng || tipoIng || origenIng || termIng.trim());
+
+  // El resumen refleja lo FILTRADO: al elegir un emprendedor, las tarjetas
+  // muestran su liquidación del periodo, que es el uso real del panel.
   const resumenIng = useMemo(() => {
     let unidades = 0;
     let altas = 0;
     let reposiciones = 0;
     const emps = new Set<string>();
-    for (const x of ingresos) {
+    for (const x of ingresosFiltrados) {
       unidades += x.cantidad;
       if (x.tipo === "alta") altas++;
       else reposiciones++;
       emps.add(x.emprendedorId);
     }
     return { unidades, altas, reposiciones, nEmp: emps.size };
-  }, [ingresos]);
+  }, [ingresosFiltrados]);
 
   // "alcance" decide cuántos documentos pedirle a Firestore:
   //   - "hoy" (default): rango [00:00, 23:59] de hoy. Una jornada típica son
@@ -344,7 +412,47 @@ export function HistorialScreen() {
     }
   }
 
-  const esHoyIng = fechaIng === hoyISO();
+  const esHoyIng = periodoIng === "dia" && fechaIng === hoyISO();
+
+  // Navegación del mes (mismo patrón que el CRM por emprendedor).
+  function navegarMes(delta: number) {
+    const [y, m] = mesIng.split("-").map(Number);
+    const d = new Date(y, m - 1 + delta, 1);
+    setMesIng(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const etiquetaMesIng = (() => {
+    const [y, m] = mesIng.split("-").map(Number);
+    return `${MESES_ING[m - 1]} ${y}`;
+  })();
+
+  // Excel de lo que se ve en pantalla (respeta filtros): sirve como
+  // liquidación mensual por emprendedor sin pasar por el reporte general.
+  function exportarIngresos() {
+    const rows = ingresosFiltrados.map((x) => ({
+      Fecha: new Date(x.en).toLocaleDateString("es-CL"),
+      Hora: new Date(x.en).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" }),
+      Emprendedor: x.emprendedorNombre,
+      Prefijo: x.emprendedorPrefijo,
+      Codigo: x.codigo,
+      Producto: x.descripcion,
+      Cantidad: x.cantidad,
+      Tipo: x.tipo === "alta" ? "Producto nuevo" : "Reposición",
+      "Precio (si alta)": x.tipo === "alta" && x.precio !== undefined ? x.precio : "",
+      Origen: x.origen === "emprendedor" ? "Emprendedor" : "Admin",
+      Por: x.por,
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(rows.length ? rows : [{ Aviso: "Sin ingresos en el periodo" }]),
+      "Ingresos"
+    );
+    const periodo = periodoIng === "mes" ? mesIng : fechaIng;
+    const quien = empIng
+      ? `_${(empsEnIngresos.find(([id]) => id === empIng)?.[1].prefijo || "emp").toLowerCase()}`
+      : "";
+    XLSX.writeFile(wb, `ingresos_${NEGOCIO.slug}_${periodo}${quien}.xlsx`);
+  }
 
   return (
     <div className="space-y-4">
@@ -366,23 +474,149 @@ export function HistorialScreen() {
             </p>
           </div>
           <div className="flex items-end gap-2 flex-wrap">
-            <div className="text-sm">
-              <span className="text-slate-500 text-xs">Día</span>
-              <SelectorFecha value={fechaIng} onChange={setFechaIng} className="mt-0.5" />
+            {/* Periodo: día puntual o mes completo. */}
+            <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
+              <button
+                onClick={() => setPeriodoIng("dia")}
+                className={`px-3 py-2 text-sm font-semibold ${
+                  periodoIng === "dia"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-white text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                Por día
+              </button>
+              <button
+                onClick={() => setPeriodoIng("mes")}
+                className={`px-3 py-2 text-sm font-semibold border-l border-slate-300 ${
+                  periodoIng === "mes"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-white text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                Por mes
+              </button>
             </div>
+            {periodoIng === "dia" ? (
+              <div className="text-sm">
+                <span className="text-slate-500 text-xs">Día</span>
+                <SelectorFecha value={fechaIng} onChange={setFechaIng} className="mt-0.5" />
+              </div>
+            ) : (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => navegarMes(-1)}
+                  className="p-2 rounded-lg border border-slate-300 hover:bg-slate-100"
+                  aria-label="Mes anterior"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <div className="bg-slate-100 rounded-lg px-3 py-2 text-sm font-semibold text-slate-800 min-w-[150px] text-center capitalize">
+                  {etiquetaMesIng}
+                </div>
+                <button
+                  onClick={() => navegarMes(1)}
+                  className="p-2 rounded-lg border border-slate-300 hover:bg-slate-100"
+                  aria-label="Mes siguiente"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
             <button
-              onClick={() => cargarIngresos(fechaIng)}
+              onClick={() => cargarIngresos()}
               disabled={cargandoIng}
               className="flex items-center gap-1.5 border border-slate-300 hover:bg-slate-100 rounded-lg px-3 py-2 text-sm disabled:opacity-50"
             >
               <RefreshCw size={16} className={cargandoIng ? "animate-spin" : ""} />
               Refrescar
             </button>
+            <button
+              onClick={exportarIngresos}
+              disabled={cargandoIng || ingresosFiltrados.length === 0}
+              title="Excel de lo que se ve en pantalla (respeta los filtros)"
+              className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-3 py-2 text-sm disabled:opacity-50"
+            >
+              <Download size={16} /> Excel
+            </button>
           </div>
         </div>
 
+        {/* Filtros. El de emprendedor es el principal: se llena solo con
+            quienes movieron stock en el periodo cargado. Todos operan en
+            memoria sobre lo ya traído: no cuestan lecturas de Firestore. */}
+        <div className="flex flex-wrap items-end gap-2 mb-3">
+          <label className="text-sm">
+            <span className="block text-slate-500 text-xs mb-0.5">Emprendedor</span>
+            <select
+              value={empIng}
+              onChange={(e) => setEmpIng(e.target.value)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px]"
+            >
+              <option value="">Todos ({empsEnIngresos.length})</option>
+              {empsEnIngresos.map(([id, e]) => (
+                <option key={id} value={id}>
+                  {e.nombre} · {e.unidades} u.
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm">
+            <span className="block text-slate-500 text-xs mb-0.5">Tipo</span>
+            <select
+              value={tipoIng}
+              onChange={(e) => setTipoIng(e.target.value as typeof tipoIng)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+            >
+              <option value="">Todos</option>
+              <option value="alta">Producto nuevo</option>
+              <option value="reposicion">Reposición</option>
+            </select>
+          </label>
+          <label className="text-sm">
+            <span className="block text-slate-500 text-xs mb-0.5">Cargado por</span>
+            <select
+              value={origenIng}
+              onChange={(e) => setOrigenIng(e.target.value as typeof origenIng)}
+              className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white"
+            >
+              <option value="">Todos</option>
+              <option value="emprendedor">Emprendedor</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <label className="text-sm flex-1 min-w-[180px]">
+            <span className="block text-slate-500 text-xs mb-0.5">Producto</span>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={termIng}
+                onChange={(e) => setTermIng(e.target.value)}
+                placeholder="Código o descripción…"
+                className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-2 text-sm"
+              />
+            </div>
+          </label>
+          {hayFiltrosIng && (
+            <button
+              onClick={() => {
+                setEmpIng("");
+                setTipoIng("");
+                setOrigenIng("");
+                setTermIng("");
+              }}
+              className="text-sm text-slate-600 hover:text-slate-900 underline px-1 py-2"
+            >
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-          <ResumenIng label="Eventos" valor={ingresos.length.toString()} />
+          <ResumenIng
+            label={hayFiltrosIng ? `Eventos (de ${ingresos.length})` : "Eventos"}
+            valor={ingresosFiltrados.length.toString()}
+          />
           <ResumenIng
             label="Unidades"
             valor={`${resumenIng.unidades} u.`}
@@ -421,6 +655,9 @@ export function HistorialScreen() {
           <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-slate-100 text-slate-600">
               <tr>
+                {periodoIng === "mes" && (
+                  <th className="text-left px-3 py-2 w-20">Fecha</th>
+                )}
                 <th className="text-left px-3 py-2 w-16">Hora</th>
                 <th className="text-left px-3 py-2">Emprendedor</th>
                 <th className="text-left px-3 py-2">Producto</th>
@@ -432,18 +669,30 @@ export function HistorialScreen() {
             <tbody>
               {cargandoIng && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
+                  <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
                     Cargando ingresos…
                   </td>
                 </tr>
               )}
-              {!cargandoIng && !errorIng && ingresos.length === 0 && (
+              {!cargandoIng && !errorIng && ingresosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-slate-400">
-                    {esHoyIng
-                      ? "Aún no hay ingresos cargados hoy."
-                      : "No hubo ingresos ese día."}
-                    {esHoyIng && (
+                  <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
+                    {ingresos.length > 0 ? (
+                      <>
+                        Ningún ingreso coincide con los filtros.
+                        <div className="mt-1 text-[11px]">
+                          Hay {ingresos.length} ingreso(s) en el periodo:
+                          prueba con <b>Limpiar filtros</b>.
+                        </div>
+                      </>
+                    ) : esHoyIng ? (
+                      "Aún no hay ingresos cargados hoy."
+                    ) : periodoIng === "mes" ? (
+                      "No hubo ingresos ese mes."
+                    ) : (
+                      "No hubo ingresos ese día."
+                    )}
+                    {esHoyIng && ingresos.length === 0 && (
                       <div className="mt-2 text-[11px] text-slate-400">
                         Si acabás de cargar productos desde /alta y no los ves acá,
                         recargá esa pestaña con Ctrl+Shift+R y volvé a cargar uno:
@@ -455,13 +704,21 @@ export function HistorialScreen() {
                   </td>
                 </tr>
               )}
-              {ingresos.map((x, i) => {
+              {ingresosFiltrados.map((x, i) => {
                 const hora = new Date(x.en).toLocaleTimeString("es-CL", {
                   hour: "2-digit",
                   minute: "2-digit",
                 });
                 return (
                   <tr key={`${x.emprendedorId}-${x.en}-${i}`} className="border-t hover:bg-slate-50">
+                    {periodoIng === "mes" && (
+                      <td className="px-3 py-2 text-slate-600 font-mono text-xs">
+                        {new Date(x.en).toLocaleDateString("es-CL", {
+                          day: "2-digit",
+                          month: "2-digit",
+                        })}
+                      </td>
+                    )}
                     <td className="px-3 py-2 text-slate-600 font-mono text-xs">{hora}</td>
                     <td className="px-3 py-2">
                       <div className="font-medium text-slate-800">{x.emprendedorNombre}</div>
