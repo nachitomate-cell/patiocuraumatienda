@@ -22,6 +22,7 @@ import {
   Ban,
   PackagePlus,
   Users,
+  ClipboardCheck,
 } from "lucide-react";
 import { Ticket } from "@/components/Ticket";
 import * as XLSX from "xlsx";
@@ -36,6 +37,9 @@ import {
   actualizarCodigoBoleta,
   actualizarMedioPago,
   ingresosDeEmprendedoresEnRango,
+  verificarMovimiento,
+  desverificarMovimiento,
+  verificarLote,
   listarClientes,
 } from "@/lib/repo";
 import {
@@ -46,7 +50,9 @@ import {
   type LineaVenta,
   type MedioPago,
   type Venta,
+  type VerificacionMov,
 } from "@/lib/types";
+import { ComprobanteMovimientos } from "@/components/ComprobanteMovimientos";
 import { money, hoyISO } from "@/lib/format";
 import { SelectorFecha } from "@/components/SelectorFecha";
 import { Modal } from "@/components/Modal";
@@ -78,28 +84,63 @@ export function HistorialScreen() {
   // Sección "Ingresos de emprendedores": eventos de alta y reposición que
   // llegan vía /alta/{token}. Se carga por separado del historial de ventas.
   // periodoIng: "dia" navega una fecha puntual; "mes" trae el mes completo
-  // (para revisar la liquidación mensual de un emprendedor de una sola vez).
-  const [periodoIng, setPeriodoIng] = useState<"dia" | "mes">("dia");
+  // (para la liquidación mensual de un emprendedor); "rango" cubre el caso
+  // real de la auditoría: el emprendedor carga en la app el domingo y llega
+  // el lunes — mirando solo "hoy" caja no vería nada.
+  const [periodoIng, setPeriodoIng] = useState<"dia" | "mes" | "rango">("dia");
   const [fechaIng, setFechaIng] = useState(hoyISO());
   const [mesIng, setMesIng] = useState(hoyISO().slice(0, 7)); // YYYY-MM
+  const [desdeIng, setDesdeIng] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [hastaIng, setHastaIng] = useState(hoyISO());
   const [ingresos, setIngresos] = useState<IngresoEmprendedor[]>([]);
   const [cargandoIng, setCargandoIng] = useState(true);
   const [errorIng, setErrorIng] = useState("");
 
   // Filtros en memoria sobre lo ya cargado (no cuestan lecturas extra).
   const [empIng, setEmpIng] = useState("");            // id de emprendedor
-  const [tipoIng, setTipoIng] = useState<"" | "alta" | "reposicion">("");
+  const [tipoIng, setTipoIng] = useState<"" | "alta" | "reposicion" | "retiro">("");
   const [origenIng, setOrigenIng] = useState<"" | "emprendedor" | "admin">("");
   const [termIng, setTermIng] = useState("");           // código o descripción
+  // Auditoría física: "pendiente" es la bandeja de trabajo de caja.
+  const [verifIng, setVerifIng] = useState<"" | "pendiente" | "verificado" | "diferencia">("");
+  // Vista agrupada por emprendedor: cuando llega con su tanda, caja quiere
+  // verlo todo junto para contar y firmar de una vez.
+  const [agrupado, setAgrupado] = useState(true);
+  const [abiertos, setAbiertos] = useState<Record<string, boolean>>({});
+  // Verificación en curso (fila individual o lote de un emprendedor).
+  const [verificando, setVerificando] = useState<string | null>(null);
+  const [difObjetivo, setDifObjetivo] = useState<IngresoEmprendedor | null>(null);
+  const [difCantidad, setDifCantidad] = useState(0);
+  const [difNota, setDifNota] = useState("");
+  const [difBusy, setDifBusy] = useState(false);
+  const [comprobante, setComprobante] = useState<{
+    nombre: string;
+    prefijo: string;
+    items: IngresoEmprendedor[];
+  } | null>(null);
 
   async function cargarIngresos(
-    modo: "dia" | "mes" = periodoIng,
+    modo: "dia" | "mes" | "rango" = periodoIng,
     fecha: string = fechaIng,
-    mes: string = mesIng
+    mes: string = mesIng,
+    ini: string = desdeIng,
+    fin: string = hastaIng
   ) {
     setCargandoIng(true);
     setErrorIng("");
     try {
+      const iniDia = (f: string) => {
+        const [y, m, d] = f.split("-").map(Number);
+        return new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+      };
+      const finDia = (f: string) => {
+        const [y, m, d] = f.split("-").map(Number);
+        return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+      };
       let desde: number;
       let hasta: number;
       if (modo === "mes") {
@@ -107,11 +148,16 @@ export function HistorialScreen() {
         const [y, m] = mes.split("-").map(Number);
         desde = new Date(y, m - 1, 1, 0, 0, 0, 0).getTime();
         hasta = new Date(y, m, 0, 23, 59, 59, 999).getTime();
+      } else if (modo === "rango") {
+        // Si vienen invertidas, se ordenan solas en vez de traer 0 filas.
+        const a = iniDia(ini);
+        const b = finDia(fin);
+        desde = Math.min(a, b);
+        hasta = Math.max(a, b);
       } else {
         // Rango [00:00:00, 23:59:59.999] en horario local de la fecha.
-        const [y, m, d] = fecha.split("-").map(Number);
-        desde = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
-        hasta = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+        desde = iniDia(fecha);
+        hasta = finDia(fecha);
       }
       const items = await ingresosDeEmprendedoresEnRango(desde, hasta);
       setIngresos(items);
@@ -127,9 +173,9 @@ export function HistorialScreen() {
   }
 
   useEffect(() => {
-    cargarIngresos(periodoIng, fechaIng, mesIng);
+    cargarIngresos(periodoIng, fechaIng, mesIng, desdeIng, hastaIng);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [periodoIng, fechaIng, mesIng]);
+  }, [periodoIng, fechaIng, mesIng, desdeIng, hastaIng]);
 
   // Emprendedores presentes en el periodo cargado, para poblar el selector
   // solo con quienes efectivamente movieron stock (no los 53 del negocio).
@@ -153,9 +199,18 @@ export function HistorialScreen() {
     const t = termIng.trim().toLowerCase();
     return ingresos.filter((x) => {
       if (empIng && x.emprendedorId !== empIng) return false;
-      if (tipoIng === "alta" && x.tipo !== "alta") return false;
-      if (tipoIng === "reposicion" && x.tipo === "alta") return false;
+      if (tipoIng && x.tipo !== tipoIng) return false;
       if (origenIng && x.origen !== origenIng) return false;
+      if (verifIng === "pendiente" && x.verificacion) return false;
+      if (verifIng === "verificado" && !x.verificacion) return false;
+      if (
+        verifIng === "diferencia" &&
+        !(
+          x.verificacion?.cantidadReal !== undefined &&
+          x.verificacion.cantidadReal !== x.cantidad
+        )
+      )
+        return false;
       if (
         t &&
         !(x.codigo || "").toLowerCase().includes(t) &&
@@ -164,24 +219,147 @@ export function HistorialScreen() {
         return false;
       return true;
     });
-  }, [ingresos, empIng, tipoIng, origenIng, termIng]);
+  }, [ingresos, empIng, tipoIng, origenIng, verifIng, termIng]);
 
-  const hayFiltrosIng = !!(empIng || tipoIng || origenIng || termIng.trim());
+  const hayFiltrosIng = !!(empIng || tipoIng || origenIng || verifIng || termIng.trim());
+
+  // Agrupación por emprendedor para el flujo de auditoría: encabezado con
+  // totales (lo que debe contar) y detalle desplegable para ir tildando.
+  const gruposIng = useMemo(() => {
+    const m = new Map<
+      string,
+      {
+        nombre: string;
+        prefijo: string;
+        items: IngresoEmprendedor[];
+        unidadesIn: number;
+        unidadesOut: number;
+        pendientes: number;
+        diferencias: number;
+      }
+    >();
+    for (const x of ingresosFiltrados) {
+      const g = m.get(x.emprendedorId) || {
+        nombre: x.emprendedorNombre,
+        prefijo: x.emprendedorPrefijo,
+        items: [],
+        unidadesIn: 0,
+        unidadesOut: 0,
+        pendientes: 0,
+        diferencias: 0,
+      };
+      g.items.push(x);
+      if (x.tipo === "retiro") g.unidadesOut += x.cantidad;
+      else g.unidadesIn += x.cantidad;
+      if (!x.verificacion) g.pendientes++;
+      else if (
+        x.verificacion.cantidadReal !== undefined &&
+        x.verificacion.cantidadReal !== x.cantidad
+      )
+        g.diferencias++;
+      m.set(x.emprendedorId, g);
+    }
+    // Primero quienes tienen cosas por verificar: es la cola de trabajo.
+    return [...m.entries()].sort((a, b) => {
+      if (!!b[1].pendientes !== !!a[1].pendientes) return b[1].pendientes - a[1].pendientes;
+      return a[1].nombre.localeCompare(b[1].nombre);
+    });
+  }, [ingresosFiltrados]);
+
+  const pendientesTotal = useMemo(
+    () => ingresosFiltrados.filter((x) => !x.verificacion).length,
+    [ingresosFiltrados]
+  );
+
+  // ===== Acciones de auditoría =====
+  function aplicarVerificacion(movIds: Set<string>, v: VerificacionMov | null) {
+    setIngresos((prev) =>
+      prev.map((x) =>
+        movIds.has(x.movId)
+          ? ({ ...x, verificacion: v ?? undefined } as IngresoEmprendedor)
+          : x
+      )
+    );
+  }
+
+  async function verificarUno(x: IngresoEmprendedor) {
+    setVerificando(x.movId);
+    try {
+      const v = await verificarMovimiento(x.emprendedorId, x.movId, vendedor);
+      aplicarVerificacion(new Set([x.movId]), v);
+    } catch (e) {
+      setErrorIng(e instanceof Error ? e.message : "No se pudo verificar.");
+    } finally {
+      setVerificando(null);
+    }
+  }
+
+  async function desverificarUno(x: IngresoEmprendedor) {
+    setVerificando(x.movId);
+    try {
+      await desverificarMovimiento(x.emprendedorId, x.movId);
+      aplicarVerificacion(new Set([x.movId]), null);
+    } catch (e) {
+      setErrorIng(e instanceof Error ? e.message : "No se pudo deshacer.");
+    } finally {
+      setVerificando(null);
+    }
+  }
+
+  async function verificarGrupo(empId: string, items: IngresoEmprendedor[]) {
+    const pend = items.filter((x) => !x.verificacion);
+    if (pend.length === 0) return;
+    setVerificando(`grupo:${empId}`);
+    try {
+      const v = await verificarLote(
+        pend.map((x) => ({ emprendedorId: x.emprendedorId, movId: x.movId })),
+        vendedor
+      );
+      aplicarVerificacion(new Set(pend.map((x) => x.movId)), v);
+    } catch (e) {
+      setErrorIng(e instanceof Error ? e.message : "No se pudo verificar el lote.");
+    } finally {
+      setVerificando(null);
+    }
+  }
+
+  async function guardarDiferencia() {
+    if (!difObjetivo) return;
+    setDifBusy(true);
+    try {
+      const v = await verificarMovimiento(
+        difObjetivo.emprendedorId,
+        difObjetivo.movId,
+        vendedor,
+        difCantidad,
+        difNota
+      );
+      aplicarVerificacion(new Set([difObjetivo.movId]), v);
+      setDifObjetivo(null);
+      setDifNota("");
+    } catch (e) {
+      setErrorIng(e instanceof Error ? e.message : "No se pudo guardar.");
+    } finally {
+      setDifBusy(false);
+    }
+  }
 
   // El resumen refleja lo FILTRADO: al elegir un emprendedor, las tarjetas
   // muestran su liquidación del periodo, que es el uso real del panel.
   const resumenIng = useMemo(() => {
     let unidades = 0;
+    let retiradas = 0;
     let altas = 0;
     let reposiciones = 0;
     const emps = new Set<string>();
     for (const x of ingresosFiltrados) {
-      unidades += x.cantidad;
+      if (x.tipo === "retiro") retiradas += x.cantidad;
+      else unidades += x.cantidad;
       if (x.tipo === "alta") altas++;
-      else reposiciones++;
+      else if (x.tipo === "reposicion") reposiciones++;
       emps.add(x.emprendedorId);
     }
-    return { unidades, altas, reposiciones, nEmp: emps.size };
+    return { unidades, retiradas, altas, reposiciones, nEmp: emps.size };
   }, [ingresosFiltrados]);
 
   // "alcance" decide cuántos documentos pedirle a Firestore:
@@ -424,6 +602,17 @@ export function HistorialScreen() {
     const [y, m] = mesIng.split("-").map(Number);
     return `${MESES_ING[m - 1]} ${y}`;
   })();
+  // Texto del periodo para el comprobante impreso y el nombre del Excel.
+  const fmtCorto = (iso: string) => {
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+  };
+  const etiquetaPeriodoIng =
+    periodoIng === "mes"
+      ? etiquetaMesIng
+      : periodoIng === "rango"
+      ? `${fmtCorto(desdeIng)} – ${fmtCorto(hastaIng)}`
+      : fmtCorto(fechaIng);
 
   // Excel de lo que se ve en pantalla (respeta filtros): sirve como
   // liquidación mensual por emprendedor sin pasar por el reporte general.
@@ -435,11 +624,27 @@ export function HistorialScreen() {
       Prefijo: x.emprendedorPrefijo,
       Codigo: x.codigo,
       Producto: x.descripcion,
-      Cantidad: x.cantidad,
-      Tipo: x.tipo === "alta" ? "Producto nuevo" : "Reposición",
+      Cantidad: x.tipo === "retiro" ? -x.cantidad : x.cantidad,
+      Tipo:
+        x.tipo === "alta"
+          ? "Producto nuevo"
+          : x.tipo === "retiro"
+          ? "Retiro"
+          : "Reposición",
       "Precio (si alta)": x.tipo === "alta" && x.precio !== undefined ? x.precio : "",
       Origen: x.origen === "emprendedor" ? "Emprendedor" : "Admin",
       Por: x.por,
+      Verificado: x.verificacion ? "SÍ" : "",
+      "Verificado por": x.verificacion?.por ?? "",
+      "Verificado el": x.verificacion
+        ? new Date(x.verificacion.en).toLocaleString("es-CL")
+        : "",
+      "Cantidad contada": x.verificacion?.cantidadReal ?? "",
+      Diferencia:
+        x.verificacion?.cantidadReal !== undefined
+          ? x.verificacion.cantidadReal - x.cantidad
+          : "",
+      "Nota auditoría": x.verificacion?.nota ?? "",
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
@@ -496,8 +701,30 @@ export function HistorialScreen() {
               >
                 Por mes
               </button>
+              <button
+                onClick={() => setPeriodoIng("rango")}
+                title="Cubre el caso de quien carga en la app un día y llega al local otro"
+                className={`px-3 py-2 text-sm font-semibold border-l border-slate-300 ${
+                  periodoIng === "rango"
+                    ? "bg-emerald-600 text-white"
+                    : "bg-white text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                Rango
+              </button>
             </div>
-            {periodoIng === "dia" ? (
+            {periodoIng === "rango" ? (
+              <div className="flex items-end gap-2">
+                <div className="text-sm">
+                  <span className="text-slate-500 text-xs">Desde</span>
+                  <SelectorFecha value={desdeIng} onChange={setDesdeIng} className="mt-0.5" />
+                </div>
+                <div className="text-sm">
+                  <span className="text-slate-500 text-xs">Hasta</span>
+                  <SelectorFecha value={hastaIng} onChange={setHastaIng} className="mt-0.5" />
+                </div>
+              </div>
+            ) : periodoIng === "dia" ? (
               <div className="text-sm">
                 <span className="text-slate-500 text-xs">Día</span>
                 <SelectorFecha value={fechaIng} onChange={setFechaIng} className="mt-0.5" />
@@ -562,6 +789,23 @@ export function HistorialScreen() {
             </select>
           </label>
           <label className="text-sm">
+            <span className="block text-slate-500 text-xs mb-0.5">Auditoría</span>
+            <select
+              value={verifIng}
+              onChange={(e) => setVerifIng(e.target.value as typeof verifIng)}
+              className={`border rounded-lg px-3 py-2 text-sm ${
+                verifIng === "pendiente"
+                  ? "border-amber-400 bg-amber-50 text-amber-900 font-semibold"
+                  : "border-slate-300 bg-white"
+              }`}
+            >
+              <option value="">Todos</option>
+              <option value="pendiente">Por verificar</option>
+              <option value="verificado">Verificados</option>
+              <option value="diferencia">Con diferencia</option>
+            </select>
+          </label>
+          <label className="text-sm">
             <span className="block text-slate-500 text-xs mb-0.5">Tipo</span>
             <select
               value={tipoIng}
@@ -571,6 +815,7 @@ export function HistorialScreen() {
               <option value="">Todos</option>
               <option value="alta">Producto nuevo</option>
               <option value="reposicion">Reposición</option>
+              <option value="retiro">Retiro</option>
             </select>
           </label>
           <label className="text-sm">
@@ -597,12 +842,24 @@ export function HistorialScreen() {
               />
             </div>
           </label>
+          <button
+            onClick={() => setAgrupado((v) => !v)}
+            title="Agrupar por emprendedor (recomendado para auditar)"
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold border ${
+              agrupado
+                ? "bg-slate-800 border-slate-800 text-white"
+                : "border-slate-300 text-slate-600 hover:bg-slate-100"
+            }`}
+          >
+            <Users size={15} /> Agrupar
+          </button>
           {hayFiltrosIng && (
             <button
               onClick={() => {
                 setEmpIng("");
                 setTipoIng("");
                 setOrigenIng("");
+                setVerifIng("");
                 setTermIng("");
               }}
               className="text-sm text-slate-600 hover:text-slate-900 underline px-1 py-2"
@@ -618,15 +875,19 @@ export function HistorialScreen() {
             valor={ingresosFiltrados.length.toString()}
           />
           <ResumenIng
-            label="Unidades"
+            label="Unidades ingresadas"
             valor={`${resumenIng.unidades} u.`}
             acento="emerald"
           />
-          <ResumenIng label="Altas" valor={resumenIng.altas.toString()} acento="cyan" />
           <ResumenIng
-            label="Emprendedores"
-            valor={resumenIng.nEmp.toString()}
-            icono={<Users size={12} />}
+            label="Unidades retiradas"
+            valor={`${resumenIng.retiradas} u.`}
+          />
+          <ResumenIng
+            label="Por verificar"
+            valor={pendientesTotal.toString()}
+            acento={pendientesTotal > 0 ? "amber" : undefined}
+            icono={<ClipboardCheck size={12} />}
           />
         </div>
 
@@ -651,11 +912,133 @@ export function HistorialScreen() {
           </div>
         )}
 
+        {/* Vista agrupada: la cola de trabajo de caja. Cada tarjeta es un
+            emprendedor con lo que declaró, para contar y firmar de una vez. */}
+        {agrupado && !cargandoIng && !errorIng && gruposIng.length > 0 && (
+          <div className="space-y-2">
+            {gruposIng.map(([empId, g]) => {
+              const abierto = abiertos[empId] ?? g.pendientes > 0;
+              const enCurso = verificando === `grupo:${empId}`;
+              return (
+                <div
+                  key={empId}
+                  className={`border rounded-xl overflow-hidden ${
+                    g.pendientes > 0 ? "border-amber-300 bg-amber-50/40" : "border-slate-200"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
+                    <button
+                      onClick={() => setAbiertos((p) => ({ ...p, [empId]: !abierto }))}
+                      className="flex items-center gap-2 text-left flex-1 min-w-0"
+                    >
+                      {abierto ? (
+                        <ChevronDown size={16} className="text-slate-400 shrink-0" />
+                      ) : (
+                        <ChevronRight size={16} className="text-slate-400 shrink-0" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="font-semibold text-slate-800 block truncate">
+                          {g.nombre}
+                          <span className="ml-1.5 font-mono text-[10px] text-slate-400 uppercase">
+                            {g.prefijo}
+                          </span>
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {g.items.length} mov.
+                          {g.unidadesIn > 0 && (
+                            <span className="text-emerald-700 font-semibold">
+                              {" "}· +{g.unidadesIn} u.
+                            </span>
+                          )}
+                          {g.unidadesOut > 0 && (
+                            <span className="text-amber-700 font-semibold">
+                              {" "}· −{g.unidadesOut} u.
+                            </span>
+                          )}
+                          {g.diferencias > 0 && (
+                            <span className="text-red-600 font-semibold">
+                              {" "}· {g.diferencias} con diferencia
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                    </button>
+                    {g.pendientes > 0 ? (
+                      <span className="text-[10px] font-bold uppercase bg-amber-500 text-white rounded px-1.5 py-0.5">
+                        {g.pendientes} por verificar
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 rounded px-1.5 py-0.5 flex items-center gap-1">
+                        <ClipboardCheck size={11} /> Todo verificado
+                      </span>
+                    )}
+                    <button
+                      onClick={() =>
+                        setComprobante({ nombre: g.nombre, prefijo: g.prefijo, items: g.items })
+                      }
+                      title="Imprimir comprobante para firmar"
+                      className="flex items-center gap-1 border border-slate-300 hover:bg-white rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-700"
+                    >
+                      <Printer size={14} /> Comprobante
+                    </button>
+                    {g.pendientes > 0 && (
+                      <button
+                        onClick={() => verificarGrupo(empId, g.items)}
+                        disabled={enCurso}
+                        className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                      >
+                        {enCurso ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <ClipboardCheck size={14} />
+                        )}
+                        Verificar todo
+                      </button>
+                    )}
+                  </div>
+
+                  {abierto && (
+                    <div className="border-t border-slate-200 bg-white">
+                      {g.items.map((x) => (
+                        <FilaAuditoria
+                          key={x.movId}
+                          x={x}
+                          busy={verificando === x.movId}
+                          onVerificar={() => verificarUno(x)}
+                          onDesverificar={() => desverificarUno(x)}
+                          onDiferencia={() => {
+                            setDifObjetivo(x);
+                            setDifCantidad(x.verificacion?.cantidadReal ?? x.cantidad);
+                            setDifNota(x.verificacion?.nota ?? "");
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {agrupado && !cargandoIng && !errorIng && gruposIng.length === 0 && (
+          <p className="px-3 py-8 text-center text-slate-400 text-sm">
+            {ingresos.length > 0
+              ? "Ningún ingreso coincide con los filtros."
+              : esHoyIng
+              ? "Aún no hay ingresos cargados hoy."
+              : "No hubo ingresos en el periodo."}
+          </p>
+        )}
+        {agrupado && cargandoIng && (
+          <p className="px-3 py-8 text-center text-slate-400 text-sm">Cargando ingresos…</p>
+        )}
+
+        {!agrupado && (
         <div className="tabla-scroll">
-          <table className="w-full text-sm min-w-[640px]">
+          <table className="w-full text-sm min-w-[720px]">
             <thead className="bg-slate-100 text-slate-600">
               <tr>
-                {periodoIng === "mes" && (
+                {periodoIng !== "dia" && (
                   <th className="text-left px-3 py-2 w-20">Fecha</th>
                 )}
                 <th className="text-left px-3 py-2 w-16">Hora</th>
@@ -664,19 +1047,20 @@ export function HistorialScreen() {
                 <th className="text-right px-3 py-2 w-20">Cantidad</th>
                 <th className="text-left px-3 py-2 w-28">Tipo</th>
                 <th className="text-left px-3 py-2 w-24">Origen</th>
+                <th className="text-left px-3 py-2 w-40">Auditoría</th>
               </tr>
             </thead>
             <tbody>
               {cargandoIng && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
+                  <td colSpan={8} className="px-3 py-8 text-center text-slate-400">
                     Cargando ingresos…
                   </td>
                 </tr>
               )}
               {!cargandoIng && !errorIng && ingresosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-slate-400">
+                  <td colSpan={8} className="px-3 py-8 text-center text-slate-400">
                     {ingresos.length > 0 ? (
                       <>
                         Ningún ingreso coincide con los filtros.
@@ -711,7 +1095,7 @@ export function HistorialScreen() {
                 });
                 return (
                   <tr key={`${x.emprendedorId}-${x.en}-${i}`} className="border-t hover:bg-slate-50">
-                    {periodoIng === "mes" && (
+                    {periodoIng !== "dia" && (
                       <td className="px-3 py-2 text-slate-600 font-mono text-xs">
                         {new Date(x.en).toLocaleDateString("es-CL", {
                           day: "2-digit",
@@ -737,19 +1121,16 @@ export function HistorialScreen() {
                         )}
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right font-semibold text-emerald-700">
-                      +{x.cantidad}
+                    <td
+                      className={`px-3 py-2 text-right font-semibold ${
+                        x.tipo === "retiro" ? "text-amber-700" : "text-emerald-700"
+                      }`}
+                    >
+                      {x.tipo === "retiro" ? "−" : "+"}
+                      {x.cantidad}
                     </td>
                     <td className="px-3 py-2">
-                      {x.tipo === "alta" ? (
-                        <span className="inline-block text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 bg-cyan-100 text-cyan-800">
-                          Producto nuevo
-                        </span>
-                      ) : (
-                        <span className="inline-block text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 bg-emerald-100 text-emerald-800">
-                          Reposición
-                        </span>
-                      )}
+                      <BadgeTipoMov tipo={x.tipo} />
                     </td>
                     <td className="px-3 py-2">
                       <span
@@ -763,12 +1144,31 @@ export function HistorialScreen() {
                         {x.origen === "emprendedor" ? "Emprendedor" : "Admin"}
                       </span>
                     </td>
+                    <td className="px-3 py-2">
+                      {x.verificacion ? (
+                        <EstadoVerificacion x={x} />
+                      ) : (
+                        <button
+                          onClick={() => verificarUno(x)}
+                          disabled={verificando === x.movId}
+                          className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-2 py-1 text-xs font-semibold disabled:opacity-50"
+                        >
+                          {verificando === x.movId ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <ClipboardCheck size={12} />
+                          )}
+                          Verificar
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {/* Reportes: ataja la búsqueda manual por fecha. Consulta Firestore por
@@ -1005,6 +1405,139 @@ export function HistorialScreen() {
           await cargar();
         }}
       />
+
+      {/* Verificar con diferencia: lo contado no calza con lo declarado.
+          No corrige el stock — deja constancia de la diferencia firmada. */}
+      <Modal
+        abierto={!!difObjetivo}
+        onCerrar={difBusy ? () => {} : () => setDifObjetivo(null)}
+        titulo="Cantidad distinta a la declarada"
+        maxW="max-w-md"
+      >
+        {difObjetivo && (
+          <div className="space-y-3">
+            <div className="bg-slate-50 rounded-lg p-3 text-sm">
+              <div className="font-semibold text-slate-800">
+                {difObjetivo.descripcion || difObjetivo.codigo}
+              </div>
+              <div className="text-xs text-slate-500 font-mono">
+                {difObjetivo.codigo} · {difObjetivo.emprendedorNombre}
+              </div>
+              <div className="mt-1 text-xs">
+                Declarado en la app:{" "}
+                <b className="text-slate-800">{difObjetivo.cantidad} u.</b>
+              </div>
+            </div>
+            <label className="block text-sm">
+              <span className="text-slate-600 font-medium">
+                Cantidad realmente contada
+              </span>
+              <input
+                type="number"
+                min={0}
+                autoFocus
+                value={difCantidad}
+                onChange={(e) => setDifCantidad(Number(e.target.value) || 0)}
+                className="mt-1 w-full border rounded-lg px-3 py-2.5 text-lg font-semibold text-center"
+              />
+            </label>
+            {difCantidad !== difObjetivo.cantidad && (
+              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+                Diferencia de{" "}
+                <b>
+                  {difCantidad > difObjetivo.cantidad ? "+" : ""}
+                  {difCantidad - difObjetivo.cantidad} u.
+                </b>{" "}
+                respecto a lo declarado. Queda registrada en el historial y
+                aparece en el comprobante. El stock no se modifica: si
+                corresponde ajustarlo, hazlo desde Stock.
+              </p>
+            )}
+            <label className="block text-sm">
+              <span className="text-slate-600 font-medium">Nota (opcional)</span>
+              <input
+                value={difNota}
+                onChange={(e) => setDifNota(e.target.value)}
+                placeholder="Ej: faltaron 2, quedaron en su casa"
+                className="mt-1 w-full border rounded-lg px-3 py-2"
+              />
+            </label>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDifObjetivo(null)}
+                disabled={difBusy}
+                className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={guardarDiferencia}
+                disabled={difBusy}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-4 py-2 disabled:opacity-50"
+              >
+                {difBusy ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <ClipboardCheck size={16} />
+                )}
+                Guardar verificación
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Comprobante para firmar. La vista previa vive en el modal; al
+          imprimir, el CSS deja visible solo #comprobante. */}
+      <Modal
+        abierto={!!comprobante}
+        onCerrar={() => setComprobante(null)}
+        titulo={comprobante ? `Comprobante · ${comprobante.nombre}` : ""}
+        maxW="max-w-3xl"
+      >
+        {comprobante && (
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500 no-print">
+              Imprime dos copias: una firmada queda en el local y la otra se la
+              lleva el emprendedor.
+            </p>
+            <div className="max-h-[60vh] overflow-y-auto border rounded-lg p-2 bg-slate-50 no-print">
+              <ComprobanteMovimientos
+                id=""
+                emprendedorNombre={comprobante.nombre}
+                emprendedorPrefijo={comprobante.prefijo}
+                items={comprobante.items}
+                periodo={etiquetaPeriodoIng}
+                recibidoPor={vendedor}
+              />
+            </div>
+            {/* Copia real de impresión (oculta en pantalla). */}
+            <div className="solo-impresion">
+              <ComprobanteMovimientos
+                emprendedorNombre={comprobante.nombre}
+                emprendedorPrefijo={comprobante.prefijo}
+                items={comprobante.items}
+                periodo={etiquetaPeriodoIng}
+                recibidoPor={vendedor}
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 no-print">
+              <button
+                onClick={() => setComprobante(null)}
+                className="px-4 py-2 text-sm rounded-lg text-slate-600 hover:bg-slate-100"
+              >
+                Cerrar
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white font-semibold rounded-lg px-4 py-2"
+              >
+                <Printer size={16} /> Imprimir
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -1950,6 +2483,129 @@ function ModalDevolucion({
 }
 
 // Mini-card de resumen para la sección "Ingresos del día".
+// Etiqueta de tipo de movimiento (alta / reposición / retiro).
+function BadgeTipoMov({ tipo }: { tipo: IngresoEmprendedor["tipo"] }) {
+  const M = {
+    alta: { txt: "Producto nuevo", cls: "bg-cyan-100 text-cyan-800" },
+    reposicion: { txt: "Reposición", cls: "bg-emerald-100 text-emerald-800" },
+    retiro: { txt: "Retiro", cls: "bg-amber-100 text-amber-800" },
+  } as const;
+  const m = M[tipo];
+  return (
+    <span
+      className={`inline-block text-[10px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5 ${m.cls}`}
+    >
+      {m.txt}
+    </span>
+  );
+}
+
+// Sello de verificación: quién contó, cuándo y si hubo diferencia.
+function EstadoVerificacion({ x }: { x: IngresoEmprendedor }) {
+  const v = x.verificacion;
+  if (!v) return null;
+  const difiere = v.cantidadReal !== undefined && v.cantidadReal !== x.cantidad;
+  return (
+    <div className="text-xs">
+      <span
+        className={`inline-flex items-center gap-1 font-semibold ${
+          difiere ? "text-red-700" : "text-emerald-700"
+        }`}
+      >
+        {difiere ? <AlertTriangle size={12} /> : <ClipboardCheck size={12} />}
+        {difiere ? `Contado: ${v.cantidadReal}` : "Verificado"}
+      </span>
+      <div className="text-[10px] text-slate-500">
+        {v.por} ·{" "}
+        {new Date(v.en).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit" })}{" "}
+        {new Date(v.en).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}
+      </div>
+      {v.nota && <div className="text-[10px] text-slate-500 italic">{v.nota}</div>}
+    </div>
+  );
+}
+
+// Fila de la vista agrupada: el gesto principal es "Verificar"; el enlace de
+// diferencia queda a mano para cuando lo contado no calza.
+function FilaAuditoria({
+  x,
+  busy,
+  onVerificar,
+  onDesverificar,
+  onDiferencia,
+}: {
+  x: IngresoEmprendedor;
+  busy: boolean;
+  onVerificar: () => void;
+  onDesverificar: () => void;
+  onDiferencia: () => void;
+}) {
+  const v = x.verificacion;
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 last:border-b-0 flex-wrap">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm text-slate-800 truncate" title={x.descripcion}>
+          {x.descripcion || "—"}
+        </div>
+        <div className="text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
+          <span className="font-mono">{x.codigo}</span>
+          <span>
+            {new Date(x.en).toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit" })}{" "}
+            {new Date(x.en).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}
+          </span>
+          <BadgeTipoMov tipo={x.tipo} />
+        </div>
+      </div>
+      <div
+        className={`text-lg font-bold shrink-0 ${
+          x.tipo === "retiro" ? "text-amber-700" : "text-emerald-700"
+        }`}
+      >
+        {x.tipo === "retiro" ? "−" : "+"}
+        {x.cantidad}
+      </div>
+      <div className="shrink-0 min-w-[140px]">
+        {v ? (
+          <div className="flex items-center gap-2">
+            <EstadoVerificacion x={x} />
+            <button
+              onClick={onDesverificar}
+              disabled={busy}
+              title="Deshacer verificación"
+              className="text-slate-400 hover:text-red-600 p-1 disabled:opacity-50"
+            >
+              <Undo2 size={13} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onVerificar}
+              disabled={busy}
+              className="flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+            >
+              {busy ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <ClipboardCheck size={13} />
+              )}
+              Verificar
+            </button>
+            <button
+              onClick={onDiferencia}
+              disabled={busy}
+              title="La cantidad física no coincide"
+              className="border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-2 py-1.5 text-xs font-semibold disabled:opacity-50"
+            >
+              ≠
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ResumenIng({
   label,
   valor,
@@ -1958,7 +2614,7 @@ function ResumenIng({
 }: {
   label: string;
   valor: string;
-  acento?: "emerald" | "cyan";
+  acento?: "emerald" | "cyan" | "amber";
   icono?: React.ReactNode;
 }) {
   const cls =
@@ -1966,6 +2622,8 @@ function ResumenIng({
       ? "text-emerald-700"
       : acento === "cyan"
       ? "text-cyan-700"
+      : acento === "amber"
+      ? "text-amber-700"
       : "text-slate-800";
   return (
     <div className="bg-slate-50 rounded-lg p-3">

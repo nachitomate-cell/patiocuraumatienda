@@ -459,7 +459,9 @@ thead th {
   #ticket,
   #ticket *,
   #etiquetas-print,
-  #etiquetas-print * {
+  #etiquetas-print *,
+  #comprobante,
+  #comprobante * {
     visibility: visible;
   }
   #ticket {
@@ -467,6 +469,20 @@ thead th {
     left: 0;
     top: 0;
     width: 80mm;
+  }
+  /* Comprobante de recepción/retiro: hoja completa (se firma a mano), no
+     boleta térmica. Sin sombras ni fondos que gasten tóner. */
+  #comprobante {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    box-shadow: none !important;
+    border: none !important;
+    background: #fff !important;
+  }
+  #comprobante .fila-comprobante {
+    break-inside: avoid;
   }
   #etiquetas-print {
     position: absolute;

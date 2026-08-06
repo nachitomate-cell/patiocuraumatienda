@@ -190,6 +190,8 @@ export function StockScreen() {
       Codigo: p.codigo,
       Descripcion: p.descripcion,
       Stock: p.stockActual,
+      "Unidades ingresadas": p.ingresadasTotal || 0,
+      "Unidades egresadas": p.egresadasTotal || 0,
       "Unidades vendidas": p.vendidasTotal || 0,
       Costo: p.costo,
       Precio: p.precio,
@@ -324,6 +326,18 @@ export function StockScreen() {
               <th className="text-left px-3 py-2">Descripción</th>
               <th className="text-left px-3 py-2">Cód. barras</th>
               <th className="text-right px-3 py-2">Stock</th>
+              <th
+                className="text-right px-3 py-2"
+                title="Unidades que entraron: alta inicial + reposiciones del emprendedor + entradas"
+              >
+                Ingresos
+              </th>
+              <th
+                className="text-right px-3 py-2"
+                title="Unidades retiradas por el emprendedor (no incluye ventas)"
+              >
+                Egresos
+              </th>
               <th className="text-right px-3 py-2" title="Unidades vendidas acumuladas (descontando devoluciones y anulaciones)">
                 Vendidas
               </th>
@@ -336,21 +350,21 @@ export function StockScreen() {
           <tbody>
             {cargando && (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={11} className="px-3 py-8 text-center text-slate-400">
                   Cargando inventario…
                 </td>
               </tr>
             )}
             {!cargando && error && (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-red-500">
+                <td colSpan={11} className="px-3 py-8 text-center text-red-500">
                   {error}
                 </td>
               </tr>
             )}
             {!cargando && !error && visibles.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-8 text-center text-slate-400">
+                <td colSpan={11} className="px-3 py-8 text-center text-slate-400">
                   Sin resultados
                 </td>
               </tr>
@@ -414,10 +428,29 @@ export function StockScreen() {
                       </span>
                     )}
                   </td>
-                  {/* Vendidas: acumulado histórico que mantiene la venta en
-                      el propio doc del producto (no cuesta lecturas extra).
-                      Campo ausente = nunca vendido: el backfill solo escribe
-                      los que tienen ventas, así que 0 es el valor correcto. */}
+                  {/* Ingresos / Egresos / Vendidas: acumulados históricos que
+                      mantienen las propias escrituras de stock en el doc del
+                      producto (no cuestan lecturas extra). Campo ausente = el
+                      movimiento nunca ocurrió; los backfills solo escriben lo
+                      que tuvo movimiento, así que 0 es el valor correcto. */}
+                  <td className="px-3 py-2 text-right">
+                    {(p.ingresadasTotal || 0) > 0 ? (
+                      <span className="font-semibold text-cyan-700">
+                        {p.ingresadasTotal}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">0</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {(p.egresadasTotal || 0) > 0 ? (
+                      <span className="font-semibold text-amber-700">
+                        {p.egresadasTotal}
+                      </span>
+                    ) : (
+                      <span className="text-slate-400">0</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right">
                     {(p.vendidasTotal || 0) > 0 ? (
                       <span className="font-semibold text-emerald-700">

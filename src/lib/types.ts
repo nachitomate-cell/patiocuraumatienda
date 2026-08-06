@@ -26,6 +26,12 @@ export interface Producto {
   // mostrar "cuánto se ha vendido" en el inventario sin leer la colección
   // de ventas. Backfill: scripts/backfill-vendidas.mjs.
   vendidasTotal?: number;
+  // Unidades que ENTRARON al local (alta inicial + "Recibí" del emprendedor +
+  // entradas del admin) y que SALIERON sin venderse ("Retiré" del
+  // emprendedor). Misma técnica que vendidasTotal: increment() en la escritura
+  // que ya toca el doc. Backfill: scripts/backfill-movimientos-producto.mjs.
+  ingresadasTotal?: number;
+  egresadasTotal?: number;
 }
 
 // Emprendedor que deja productos en consignación.
@@ -134,6 +140,18 @@ export type AccionMovEmprendedor =
   | "emprendedor_activado"
   | "emprendedor_pausado";
 
+// Auditoría física de un movimiento de stock: el emprendedor declara en la
+// app lo que trae (o se lleva) y quien está en caja cuenta los productos y
+// confirma. Queda firmado con el vendedor y la hora. Si lo contado no calza
+// con lo declarado, `cantidadReal` guarda lo que realmente llegó — así la
+// diferencia queda registrada en vez de perderse en un ajuste manual.
+export interface VerificacionMov {
+  en: number; // epoch ms de la verificación
+  por: string; // vendedor que contó los productos
+  cantidadReal?: number; // solo si difiere de la cantidad declarada
+  nota?: string;
+}
+
 export interface MovimientoEmprendedor {
   en: number; // epoch ms
   por: string; // nombre del actor (vendedor o emprendedor)
@@ -146,6 +164,8 @@ export interface MovimientoEmprendedor {
   // para precio/stock/costo. Se guardan como string siempre para simplificar la UI.
   antes?: string;
   despues?: string;
+  // Presente cuando caja ya auditó físicamente este movimiento.
+  verificacion?: VerificacionMov;
 }
 
 // Evento de ingreso de stock atribuible a un emprendedor: o bien dio de alta
@@ -155,17 +175,22 @@ export interface MovimientoEmprendedor {
 // marcha cruzando todos los emprendedores.
 export interface IngresoEmprendedor {
   en: number; // epoch ms del movimiento original
+  // Id del doc en emprendedores/{emprendedorId}/movimientos: permite escribir
+  // la verificación de vuelta sobre el movimiento original.
+  movId: string;
   emprendedorId: string;
   emprendedorNombre: string;
   emprendedorPrefijo: string;
-  // "alta" = producto nuevo cargado; "reposicion" = stock_cambiado con delta > 0.
-  tipo: "alta" | "reposicion";
+  // "alta" = producto nuevo cargado; "reposicion" = stock_cambiado con
+  // delta > 0; "retiro" = delta < 0 (el emprendedor se llevó unidades).
+  tipo: "alta" | "reposicion" | "retiro";
   codigo: string;
   descripcion: string;
-  cantidad: number; // unidades efectivamente ingresadas
+  cantidad: number; // unidades del movimiento, siempre positivas
   precio?: number; // solo en alta (se parsea del campo "despues")
   por: string; // nombre del actor que registró el movimiento
   origen: "admin" | "emprendedor";
+  verificacion?: VerificacionMov;
 }
 
 export interface LineaEntrada {

@@ -15,6 +15,7 @@ import {
   runTransaction,
   increment,
   documentId,
+  deleteField,
   onSnapshot,
 } from "firebase/firestore";
 import { getDb } from "./firebase";
@@ -37,6 +38,7 @@ import {
   type Producto,
   type Retiro,
   type Venta,
+  type VerificacionMov,
 } from "./types";
 import type { BoletaConfig } from "./negocio";
 
@@ -804,6 +806,7 @@ export async function ingresosDeEmprendedoresEnRango(
       const { precio, stock } = parseDespuesAlta(m.despues);
       resultados.push({
         en: m.en,
+        movId: d.id,
         emprendedorId: empId,
         emprendedorNombre: nombre,
         emprendedorPrefijo: prefijo,
@@ -814,28 +817,104 @@ export async function ingresosDeEmprendedoresEnRango(
         precio,
         por: m.por,
         origen: m.origen,
+        verificacion: m.verificacion,
       });
     } else if (m.accion === "stock_cambiado") {
       const antes = Number(m.antes ?? 0);
       const despues = Number(m.despues ?? 0);
       const delta = despues - antes;
-      if (delta > 0) {
+      // delta < 0 = el emprendedor retiró unidades. Se incluye porque la
+      // auditoría de caja y el comprobante que firma cubren ambos sentidos:
+      // lo que trajo y lo que se llevó.
+      if (delta !== 0) {
         resultados.push({
           en: m.en,
+          movId: d.id,
           emprendedorId: empId,
           emprendedorNombre: nombre,
           emprendedorPrefijo: prefijo,
-          tipo: "reposicion",
+          tipo: delta > 0 ? "reposicion" : "retiro",
           codigo: m.codigo || "",
           descripcion: m.descripcion || "",
-          cantidad: delta,
+          cantidad: Math.abs(delta),
           por: m.por,
           origen: m.origen,
+          verificacion: m.verificacion,
         });
       }
     }
   }
   return resultados;
+}
+
+// ===== Auditoría física de movimientos =====
+// Caja cuenta lo que el emprendedor trajo/retiró y firma el movimiento. La
+// verificación se guarda EN el movimiento original (subcolección movimientos
+// del emprendedor), así viaja con la bitácora y el emprendedor puede verla.
+//
+// cantidadReal: solo cuando lo contado difiere de lo declarado. No corrige el
+// stock automáticamente — deja constancia de la diferencia; el ajuste lo hace
+// caja explícitamente si corresponde.
+export async function verificarMovimiento(
+  empId: string,
+  movId: string,
+  quien: string,
+  cantidadReal?: number,
+  nota?: string
+): Promise<VerificacionMov> {
+  if (!empId || !movId) throw new Error("Movimiento inválido.");
+  const v: VerificacionMov = {
+    en: Date.now(),
+    por: quien || "Caja",
+  };
+  if (cantidadReal !== undefined && Number.isFinite(cantidadReal)) {
+    v.cantidadReal = Math.max(0, Math.round(cantidadReal));
+  }
+  const n = (nota || "").trim();
+  if (n) v.nota = n;
+  await setDoc(
+    tdoc(EMPRENDEDORES, empId, MOVIMIENTOS_EMP, movId),
+    { verificacion: v },
+    { merge: true }
+  );
+  return v;
+}
+
+// Deshace una verificación (se marcó por error).
+export async function desverificarMovimiento(
+  empId: string,
+  movId: string
+): Promise<void> {
+  if (!empId || !movId) throw new Error("Movimiento inválido.");
+  await setDoc(
+    tdoc(EMPRENDEDORES, empId, MOVIMIENTOS_EMP, movId),
+    { verificacion: deleteField() },
+    { merge: true }
+  );
+}
+
+// Verifica varios movimientos de una vez (el emprendedor llegó con toda su
+// tanda y caja la contó completa). Un batch: 1 escritura por movimiento.
+export async function verificarLote(
+  items: Array<{ emprendedorId: string; movId: string }>,
+  quien: string
+): Promise<VerificacionMov> {
+  const v: VerificacionMov = { en: Date.now(), por: quien || "Caja" };
+  const db = getDb();
+  const CHUNK = 400;
+  for (let i = 0; i < items.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    for (const it of items.slice(i, i + CHUNK)) {
+      if (!it.emprendedorId || !it.movId) continue;
+      batch.set(
+        tdoc(EMPRENDEDORES, it.emprendedorId, MOVIMIENTOS_EMP, it.movId),
+        { verificacion: v },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+  }
+  return v;
 }
 
 // ===== Emprendedores (consignación) =====
@@ -1106,6 +1185,8 @@ export async function agregarProductoEmprendedor(
         emprendedorNombre: emp.nombre,
         creadoEn: Date.now(),
         actualizadoEn: Date.now(),
+        // El stock inicial del alta es la primera entrada física del producto.
+        ingresadasTotal: stockN,
       };
       if (vence) docProd.vence = vence;
       tx.set(tdoc(PRODUCTOS, cod), docProd);
@@ -1385,6 +1466,11 @@ export async function ajustarStockEmprendedor(
     }
     const cambios: Record<string, unknown> = {
       stockActual: despues,
+      // Acumulados de movimiento físico: lo que el emprendedor trajo vs. lo
+      // que se llevó. Viajan en la misma escritura, sin costo adicional.
+      ...(d > 0
+        ? { ingresadasTotal: increment(d) }
+        : { egresadasTotal: increment(-d) }),
       actualizadoEn: Date.now(),
     };
     if (propioPorPrefijo) {
@@ -1660,6 +1746,8 @@ export async function registrarEntrada(
         descripcion: l.descripcion,
         lote: l.lote ?? "",
         stockActual: increment(l.cantidad),
+        // Una entrada del admin también es mercadería que entró al local.
+        ingresadasTotal: increment(l.cantidad),
         actualizadoEn: Date.now(),
       },
       { merge: true }
