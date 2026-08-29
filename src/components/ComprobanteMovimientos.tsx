@@ -32,7 +32,9 @@ export function ComprobanteMovimientos({
   id = "comprobante",
 }: Props) {
   const NEGOCIO = useNegocio();
-  const ingresos = items.filter((x) => x.tipo !== "retiro");
+  // Las ediciones de ficha (precio/descripción) no mueven unidades físicas:
+  // quedan fuera del documento que se firma por mercadería contada.
+  const ingresos = items.filter((x) => x.tipo === "alta" || x.tipo === "reposicion");
   const retiros = items.filter((x) => x.tipo === "retiro");
 
   // La cantidad que vale es la contada por caja cuando existe.

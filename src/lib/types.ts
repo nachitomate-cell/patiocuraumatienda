@@ -182,12 +182,22 @@ export interface IngresoEmprendedor {
   emprendedorNombre: string;
   emprendedorPrefijo: string;
   // "alta" = producto nuevo cargado; "reposicion" = stock_cambiado con
-  // delta > 0; "retiro" = delta < 0 (el emprendedor se llevó unidades).
-  tipo: "alta" | "reposicion" | "retiro";
+  // delta > 0; "retiro" = delta < 0 (el emprendedor se llevó unidades);
+  // "edicion" = corrección de ficha (precio/descripción/vencimiento) sin
+  // movimiento físico de unidades (cantidad = 0).
+  tipo: "alta" | "reposicion" | "retiro" | "edicion";
   codigo: string;
   descripcion: string;
   cantidad: number; // unidades del movimiento, siempre positivas
   precio?: number; // solo en alta (se parsea del campo "despues")
+  // Solo en edicion: qué cambió, legible ("Precio: $5.000 → $6.000").
+  detalle?: string;
+  // Estado ACTUAL del producto en el catálogo al momento de cargar el panel.
+  // Permite que caja audite contra lo que el emprendedor ve hoy en su app,
+  // no contra la foto de cuando declaró el movimiento. Ausentes si el
+  // producto ya no existe en el catálogo.
+  precioActual?: number;
+  descripcionActual?: string;
   por: string; // nombre del actor que registró el movimiento
   origen: "admin" | "emprendedor";
   verificacion?: VerificacionMov;

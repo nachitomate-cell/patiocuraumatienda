@@ -108,6 +108,11 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   const [edPrecio, setEdPrecio] = useState(0);
   const [edStock, setEdStock] = useState(0);
   const [edVence, setEdVence] = useState("");
+  // Foto del producto al abrir el editor. Al guardar SOLO se envían los
+  // campos que el usuario modificó respecto de esta foto: mandar siempre el
+  // stock absoluto precargado pisaba ventas/ingresos ocurridos entremedio y
+  // generaba retiros/reposiciones fantasma en la auditoría de caja.
+  const [editOriginal, setEditOriginal] = useState<Producto | null>(null);
   const [busyEdit, setBusyEdit] = useState(false);
   const [editErr, setEditErr] = useState("");
 
@@ -404,6 +409,7 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
   // ===== Edición =====
   function abrirEdicion(p: Producto) {
     setEditCodigo(p.codigo);
+    setEditOriginal(p);
     setEdDescripcion(p.descripcion || "");
     setEdPrecio(p.precio || 0);
     setEdStock(p.stockActual || 0);
@@ -559,30 +565,37 @@ export function AltaEmprendedorScreen({ token }: { token: string }) {
 
   async function guardarEdicion() {
     if (!emp || !editCodigo) return;
+    // Solo los campos que el usuario tocó respecto de la foto de apertura.
+    // En particular el stock NO viaja si no lo cambió: es un valor absoluto
+    // que pisaría las ventas/ingresos ocurridos desde que cargó la página.
+    const orig = editOriginal;
+    const cambios: {
+      descripcion?: string;
+      precio?: number;
+      stockActual?: number;
+      vence?: string;
+    } = {};
+    if (edDescripcion.trim() !== (orig?.descripcion || "")) cambios.descripcion = edDescripcion;
+    if (Math.max(0, Math.round(edPrecio || 0)) !== (orig?.precio || 0)) cambios.precio = edPrecio;
+    if (Math.max(0, Math.round(edStock || 0)) !== (orig?.stockActual || 0)) cambios.stockActual = edStock;
+    if (edVence.trim() !== (orig?.vence || "")) cambios.vence = edVence;
+    if (Object.keys(cambios).length === 0) {
+      setEditCodigo(null);
+      return;
+    }
     setBusyEdit(true);
     setEditErr("");
     try {
-      await actualizarProductoEmprendedor(
-        emp,
-        editCodigo,
-        {
-          descripcion: edDescripcion,
-          precio: edPrecio,
-          stockActual: edStock,
-          vence: edVence,
-        },
-        "emprendedor",
-        emp.nombre
-      );
+      await actualizarProductoEmprendedor(emp, editCodigo, cambios, "emprendedor", emp.nombre);
       setProductos((prev) =>
         prev.map((p) =>
           p.codigo === editCodigo
             ? {
                 ...p,
-                descripcion: edDescripcion.trim(),
-                precio: Math.max(0, Math.round(edPrecio || 0)),
-                stockActual: Math.max(0, Math.round(edStock || 0)),
-                vence: edVence.trim() || undefined,
+                ...(cambios.descripcion !== undefined && { descripcion: edDescripcion.trim() }),
+                ...(cambios.precio !== undefined && { precio: Math.max(0, Math.round(edPrecio || 0)) }),
+                ...(cambios.stockActual !== undefined && { stockActual: Math.max(0, Math.round(edStock || 0)) }),
+                ...(cambios.vence !== undefined && { vence: edVence.trim() || undefined }),
               }
             : p
         )

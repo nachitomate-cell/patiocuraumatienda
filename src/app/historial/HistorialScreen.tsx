@@ -102,7 +102,7 @@ export function HistorialScreen() {
 
   // Filtros en memoria sobre lo ya cargado (no cuestan lecturas extra).
   const [empIng, setEmpIng] = useState("");            // id de emprendedor
-  const [tipoIng, setTipoIng] = useState<"" | "alta" | "reposicion" | "retiro">("");
+  const [tipoIng, setTipoIng] = useState<"" | "alta" | "reposicion" | "retiro" | "edicion">("");
   const [origenIng, setOrigenIng] = useState<"" | "emprendedor" | "admin">("");
   const [termIng, setTermIng] = useState("");           // código o descripción
   // Auditoría física: "pendiente" es la bandeja de trabajo de caja.
@@ -626,15 +626,19 @@ export function HistorialScreen() {
       Emprendedor: x.emprendedorNombre,
       Prefijo: x.emprendedorPrefijo,
       Codigo: x.codigo,
-      Producto: x.descripcion,
-      Cantidad: x.tipo === "retiro" ? -x.cantidad : x.cantidad,
+      Producto: x.descripcionActual ?? x.descripcion,
+      Cantidad: x.tipo === "edicion" ? "" : x.tipo === "retiro" ? -x.cantidad : x.cantidad,
       Tipo:
         x.tipo === "alta"
           ? "Producto nuevo"
           : x.tipo === "retiro"
           ? "Retiro"
+          : x.tipo === "edicion"
+          ? "Edición"
           : "Reposición",
-      "Precio (si alta)": x.tipo === "alta" && x.precio !== undefined ? x.precio : "",
+      "Precio actual": x.precioActual ?? x.precio ?? "",
+      "Precio declarado (si alta)": x.tipo === "alta" && x.precio !== undefined ? x.precio : "",
+      Detalle: x.detalle ?? "",
       Origen: x.origen === "emprendedor" ? "Emprendedor" : "Admin",
       Por: x.por,
       Verificado: x.verificacion ? "SÍ" : "",
@@ -678,7 +682,8 @@ export function HistorialScreen() {
             <p className="text-xs text-slate-500 mt-0.5">
               Lo que cargaron los emprendedores en {" "}
               <span className="font-mono text-slate-700">/alta/{"{token}"}</span>: altas
-              nuevas y stock que declararon haber traído.
+              nuevas, stock declarado y correcciones de ficha (precio/descripción).
+              Precio y descripción se muestran al valor ACTUAL del catálogo.
             </p>
           </div>
           <div className="flex items-end gap-2 flex-wrap">
@@ -819,6 +824,7 @@ export function HistorialScreen() {
               <option value="alta">Producto nuevo</option>
               <option value="reposicion">Reposición</option>
               <option value="retiro">Retiro</option>
+              <option value="edicion">Edición</option>
             </select>
           </label>
           <label className="text-sm">
@@ -1048,6 +1054,12 @@ export function HistorialScreen() {
                 <th className="text-left px-3 py-2">Emprendedor</th>
                 <th className="text-left px-3 py-2">Producto</th>
                 <th className="text-right px-3 py-2 w-20">Cantidad</th>
+                <th
+                  className="text-right px-3 py-2 w-24"
+                  title="Precio de venta ACTUAL del producto en el catálogo (lo mismo que ve el emprendedor en su app)"
+                >
+                  Precio
+                </th>
                 <th className="text-left px-3 py-2 w-28">Tipo</th>
                 <th className="text-left px-3 py-2 w-24">Origen</th>
                 <th className="text-left px-3 py-2 w-40">Auditoría</th>
@@ -1056,14 +1068,14 @@ export function HistorialScreen() {
             <tbody>
               {cargandoIng && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-slate-400">
+                  <td colSpan={9} className="px-3 py-8 text-center text-slate-400">
                     Cargando ingresos…
                   </td>
                 </tr>
               )}
               {!cargandoIng && !errorIng && ingresosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-slate-400">
+                  <td colSpan={9} className="px-3 py-8 text-center text-slate-400">
                     {ingresos.length > 0 ? (
                       <>
                         Ningún ingreso coincide con los filtros.
@@ -1114,23 +1126,62 @@ export function HistorialScreen() {
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      <div className="text-slate-800 truncate max-w-[260px]" title={x.descripcion}>
-                        {x.descripcion || "—"}
+                      {/* Se muestra la descripción ACTUAL del catálogo (la que
+                          el emprendedor ve en su app); la declarada queda como
+                          referencia cuando difiere. */}
+                      <div
+                        className="text-slate-800 truncate max-w-[260px]"
+                        title={x.descripcionActual ?? x.descripcion}
+                      >
+                        {x.descripcionActual ?? x.descripcion ?? "—"}
                       </div>
-                      <div className="text-xs text-slate-500 font-mono">
-                        {x.codigo}
-                        {x.tipo === "alta" && x.precio !== undefined && (
-                          <span className="ml-2 text-slate-400">{money(x.precio)}</span>
+                      {x.descripcionActual !== undefined &&
+                        x.descripcion &&
+                        x.descripcionActual !== x.descripcion && (
+                          <div
+                            className="text-[10px] text-violet-600 truncate max-w-[260px]"
+                            title={`Declarado: ${x.descripcion}`}
+                          >
+                            antes: {x.descripcion}
+                          </div>
                         )}
-                      </div>
+                      <div className="text-xs text-slate-500 font-mono">{x.codigo}</div>
+                      {x.detalle && (
+                        <div className="text-[11px] text-violet-700 mt-0.5">{x.detalle}</div>
+                      )}
                     </td>
                     <td
                       className={`px-3 py-2 text-right font-semibold ${
-                        x.tipo === "retiro" ? "text-amber-700" : "text-emerald-700"
+                        x.tipo === "edicion"
+                          ? "text-slate-300"
+                          : x.tipo === "retiro"
+                          ? "text-amber-700"
+                          : "text-emerald-700"
                       }`}
                     >
-                      {x.tipo === "retiro" ? "−" : "+"}
-                      {x.cantidad}
+                      {x.tipo === "edicion" ? "—" : `${x.tipo === "retiro" ? "−" : "+"}${x.cantidad}`}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {x.precioActual !== undefined || x.precio !== undefined ? (
+                        <>
+                          <span className="font-medium text-slate-800">
+                            {money(x.precioActual ?? x.precio ?? 0)}
+                          </span>
+                          {x.tipo === "alta" &&
+                            x.precio !== undefined &&
+                            x.precioActual !== undefined &&
+                            x.precioActual !== x.precio && (
+                              <div
+                                className="text-[10px] text-violet-600"
+                                title="El precio cambió después del alta"
+                              >
+                                declaró {money(x.precio)}
+                              </div>
+                            )}
+                        </>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <BadgeTipoMov tipo={x.tipo} />
@@ -2501,6 +2552,7 @@ function BadgeTipoMov({ tipo }: { tipo: IngresoEmprendedor["tipo"] }) {
     alta: { txt: "Producto nuevo", cls: "bg-cyan-100 text-cyan-800" },
     reposicion: { txt: "Reposición", cls: "bg-emerald-100 text-emerald-800" },
     retiro: { txt: "Retiro", cls: "bg-amber-100 text-amber-800" },
+    edicion: { txt: "Edición", cls: "bg-violet-100 text-violet-800" },
   } as const;
   const m = M[tipo];
   return (
@@ -2556,9 +2608,18 @@ function FilaAuditoria({
   return (
     <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 last:border-b-0 flex-wrap">
       <div className="min-w-0 flex-1">
-        <div className="text-sm text-slate-800 truncate" title={x.descripcion}>
-          {x.descripcion || "—"}
+        {/* Descripción ACTUAL del catálogo: caja compara contra lo que el
+            emprendedor ve hoy en su app, no contra la foto del movimiento. */}
+        <div className="text-sm text-slate-800 truncate" title={x.descripcionActual ?? x.descripcion}>
+          {x.descripcionActual ?? x.descripcion ?? "—"}
         </div>
+        {x.descripcionActual !== undefined &&
+          x.descripcion &&
+          x.descripcionActual !== x.descripcion && (
+            <div className="text-[10px] text-violet-600 truncate" title={`Declarado: ${x.descripcion}`}>
+              antes: {x.descripcion}
+            </div>
+          )}
         <div className="text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
           <span className="font-mono">{x.codigo}</span>
           <span>
@@ -2567,14 +2628,24 @@ function FilaAuditoria({
           </span>
           <BadgeTipoMov tipo={x.tipo} />
         </div>
+        {x.detalle && <div className="text-[11px] text-violet-700 mt-0.5">{x.detalle}</div>}
       </div>
-      <div
-        className={`text-lg font-bold shrink-0 ${
-          x.tipo === "retiro" ? "text-amber-700" : "text-emerald-700"
-        }`}
-      >
-        {x.tipo === "retiro" ? "−" : "+"}
-        {x.cantidad}
+      <div className="text-right shrink-0">
+        {(x.precioActual !== undefined || x.precio !== undefined) && (
+          <div className="text-sm font-semibold text-slate-800">
+            {money(x.precioActual ?? x.precio ?? 0)}
+          </div>
+        )}
+        {x.tipo !== "edicion" && (
+          <div
+            className={`text-lg font-bold leading-tight ${
+              x.tipo === "retiro" ? "text-amber-700" : "text-emerald-700"
+            }`}
+          >
+            {x.tipo === "retiro" ? "−" : "+"}
+            {x.cantidad}
+          </div>
+        )}
       </div>
       <div className="shrink-0 min-w-[140px]">
         {v ? (
@@ -2603,14 +2674,18 @@ function FilaAuditoria({
               )}
               Verificar
             </button>
-            <button
-              onClick={onDiferencia}
-              disabled={busy}
-              title="La cantidad física no coincide"
-              className="border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-2 py-1.5 text-xs font-semibold disabled:opacity-50"
-            >
-              ≠
-            </button>
+            {/* "Contado distinto" no aplica a una edición de ficha: no hay
+                unidades físicas que contar. */}
+            {x.tipo !== "edicion" && (
+              <button
+                onClick={onDiferencia}
+                disabled={busy}
+                title="La cantidad física no coincide"
+                className="border border-amber-300 text-amber-700 hover:bg-amber-50 rounded-lg px-2 py-1.5 text-xs font-semibold disabled:opacity-50"
+              >
+                ≠
+              </button>
+            )}
           </div>
         )}
       </div>

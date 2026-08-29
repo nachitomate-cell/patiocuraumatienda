@@ -19,6 +19,7 @@ import {
   onSnapshot,
 } from "firebase/firestore";
 import { getDb } from "./firebase";
+import { money } from "./format";
 import { getNegocioId, onCambioNegocio } from "./tenant";
 import {
   subtotalLinea,
@@ -760,10 +761,18 @@ function parseDespuesAlta(s: string | undefined): { precio: number; stock: numbe
 // dispara muchas lecturas vacías en negocios con muchos emprendedores que
 // no cargaron nada hoy.
 //
-// Considera dos acciones como ingreso de stock:
+// Acciones que se convierten en fila del panel:
 //   - producto_agregado: alta de un nuevo SKU (cantidad = stock inicial).
-//   - stock_cambiado con delta > 0: el emprendedor declaró "Recibí" más
-//     unidades. Si el delta es negativo (retiró) NO cuenta.
+//   - stock_cambiado: delta > 0 es "reposicion" (declaró Recibí), delta < 0
+//     es "retiro" (se llevó unidades).
+//   - precio_cambiado / descripcion_cambiada / vencimiento_cambiado: fila
+//     "edicion" con cantidad 0. Sin esto, las correcciones que el emprendedor
+//     hace después del alta eran invisibles para caja y la revisión física
+//     se hacía contra datos viejos.
+//
+// Además cada fila se enriquece con precio/descripción ACTUALES del catálogo
+// (una query batcheada por códigos), para que caja siempre compare contra lo
+// que el emprendedor ve hoy en su app y no contra la foto del movimiento.
 //
 // Requisitos:
 //   - Cada doc en /negocios/{slug}/emprendedores/{id}/movimientos lleva
@@ -842,7 +851,59 @@ export async function ingresosDeEmprendedoresEnRango(
           verificacion: m.verificacion,
         });
       }
+    } else if (
+      m.accion === "precio_cambiado" ||
+      m.accion === "descripcion_cambiada" ||
+      m.accion === "vencimiento_cambiado"
+    ) {
+      const detalle =
+        m.accion === "precio_cambiado"
+          ? `Precio: ${money(Number(m.antes ?? 0))} → ${money(Number(m.despues ?? 0))}`
+          : m.accion === "descripcion_cambiada"
+          ? `Descripción: "${m.antes ?? ""}" → "${m.despues ?? ""}"`
+          : `Vence: ${m.antes || "sin fecha"} → ${m.despues || "sin fecha"}`;
+      resultados.push({
+        en: m.en,
+        movId: d.id,
+        emprendedorId: empId,
+        emprendedorNombre: nombre,
+        emprendedorPrefijo: prefijo,
+        tipo: "edicion",
+        codigo: m.codigo || "",
+        descripcion: m.descripcion || "",
+        cantidad: 0,
+        detalle,
+        por: m.por,
+        origen: m.origen,
+        verificacion: m.verificacion,
+      });
     }
+  }
+
+  // Enriquecer con el estado ACTUAL del catálogo. Query batcheada por IDs de
+  // documento (el código es el ID): en una jornada típica son <30 códigos
+  // únicos = 1 query. Best-effort: si falla, el panel muestra los snapshots.
+  const codigos = [...new Set(resultados.map((r) => r.codigo).filter(Boolean))];
+  try {
+    for (let i = 0; i < codigos.length; i += 30) {
+      const chunk = codigos.slice(i, i + 30);
+      const prods = await getDocs(
+        query(tcol(PRODUCTOS), where(documentId(), "in", chunk))
+      );
+      const porCodigo = new Map<string, Producto>();
+      for (const d of prods.docs) {
+        const p = d.data() as Producto;
+        if (!p.eliminado) porCodigo.set(p.codigo || d.id, p);
+      }
+      for (const r of resultados) {
+        const p = porCodigo.get(r.codigo);
+        if (!p) continue;
+        r.precioActual = p.precio ?? 0;
+        r.descripcionActual = p.descripcion ?? "";
+      }
+    }
+  } catch {
+    // no-op: sin enriquecimiento el panel sigue funcionando con la foto.
   }
   return resultados;
 }
@@ -1399,6 +1460,16 @@ export async function actualizarProductoEmprendedor(
     // como "sin vence"). No usamos deleteField para no complicar el merge.
     limpio.vence = (cambios.vence || "").trim();
   }
+  // Defensa contra escrituras "de arrastre": se descarta todo campo cuyo
+  // valor no difiere del que YA tiene el doc en Firestore. El caso que motivó
+  // esto: la UI mandaba el stock precargado en el formulario junto con un
+  // cambio de precio, y si la base había cambiado entremedio (venta, ingreso)
+  // la edición revertía el stock y la bitácora registraba retiros/reposiciones
+  // fantasma que descuadraban la auditoría de caja.
+  if (limpio.descripcion === (p.descripcion ?? "")) delete limpio.descripcion;
+  if (limpio.precio === (p.precio ?? 0)) delete limpio.precio;
+  if (limpio.stockActual === (p.stockActual ?? 0)) delete limpio.stockActual;
+  if (limpio.vence === ((p.vence ?? "") as string)) delete limpio.vence;
   if (Object.keys(limpio).length === 0) return;
   limpio.actualizadoEn = Date.now();
   await setDoc(ref, limpio, { merge: true });
