@@ -30,7 +30,9 @@ export function OPTIONS() {
 }
 
 export async function GET(req: NextRequest) {
-  const expectedToken = process.env.INVENTARIO_API_TOKEN;
+  // trim(): al pegar el token en el dashboard de Vercel puede colarse un
+  // espacio o salto de línea invisible que rompería la comparación exacta.
+  const expectedToken = (process.env.INVENTARIO_API_TOKEN || "").trim();
   if (!expectedToken) {
     return NextResponse.json(
       { error: "API no configurada: falta INVENTARIO_API_TOKEN." },
@@ -38,7 +40,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const auth = req.headers.get("authorization") || "";
+  const auth = (req.headers.get("authorization") || "").trim();
   if (auth !== `Bearer ${expectedToken}`) {
     return NextResponse.json(
       { error: "No autorizado." },
