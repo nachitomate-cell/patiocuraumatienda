@@ -61,12 +61,12 @@ export async function GET(req: NextRequest) {
       descripcion?: string;
       stockActual?: number;
       precio?: number;
-      costo?: number;
       lote?: string;
       barcode?: string;
-      emprendedorNombre?: string;
     };
 
+    // No se exponen costo ni emprendedor: son datos internos del negocio y el
+    // consumidor externo (ej. Jumpseller) sólo necesita catálogo, stock y precio.
     const productos = snap.docs
       .map((d) => {
         const data = d.data() as Doc;
@@ -75,10 +75,8 @@ export async function GET(req: NextRequest) {
           descripcion: data.descripcion ?? "",
           stock: data.stockActual ?? 0,
           precio: data.precio ?? 0,
-          costo: data.costo ?? 0,
           lote: data.lote ?? "",
           barcode: data.barcode ?? "",
-          emprendedor: data.emprendedorNombre ?? "",
         };
       })
       .filter((p) => (soloConStock ? p.stock > 0 : true));
