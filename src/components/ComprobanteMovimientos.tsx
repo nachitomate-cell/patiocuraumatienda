@@ -85,7 +85,11 @@ export function ComprobanteMovimientos({
                 </td>
                 <td className="py-1 font-mono">{x.codigo}</td>
                 <td className="py-1">
-                  {x.descripcion || "—"}
+                  {/* Descripción ACTUAL del catálogo (igual que la pantalla de
+                      auditoría y el Excel del emprendedor): si la ficha se
+                      corrigió después de declarar el movimiento, el papel que
+                      ambos firman debe decir lo mismo que ven en sus apps. */}
+                  {x.descripcionActual ?? x.descripcion ?? "—"}
                   {x.tipo === "alta" && (
                     <span className="ml-1 text-[9px] uppercase">(nuevo)</span>
                   )}
