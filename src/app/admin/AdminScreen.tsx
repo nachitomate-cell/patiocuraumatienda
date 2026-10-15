@@ -11,13 +11,68 @@ import {
   Target,
   Check,
   FlaskConical,
+  CalendarRange,
+  AlertTriangle,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { ultimasVentas, getMetaDiaria, guardarMetaDiaria } from "@/lib/repo";
+import {
+  ultimasVentas,
+  getMetaDiaria,
+  guardarMetaDiaria,
+  ventasEnRango,
+  devolucionesEnRango,
+  listarEmprendedores,
+} from "@/lib/repo";
+import { armarReporteVentas, describirRango, nombreArchivoReporte } from "@/lib/reporteVentas";
+import { SelectorFecha } from "@/components/SelectorFecha";
 import seed from "@/data/productos.seed.json";
 import type { Producto, Venta } from "@/lib/types";
 import { money } from "@/lib/format";
 import { useNegocio } from "@/lib/negocio-context";
+
+type Atajo = "semana_pasada" | "esta_semana" | "mes_pasado" | "este_mes" | "otro";
+
+const ATAJOS: { id: Atajo; label: string }[] = [
+  { id: "semana_pasada", label: "Semana pasada (lun–dom)" },
+  { id: "esta_semana", label: "Esta semana" },
+  { id: "mes_pasado", label: "Mes pasado" },
+  { id: "este_mes", label: "Este mes" },
+  { id: "otro", label: "Otro período" },
+];
+
+function aIso(f: Date): string {
+  return `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, "0")}-${String(f.getDate()).padStart(2, "0")}`;
+}
+
+// Rango del atajo en días del calendario local (el local está en Chile).
+function rangoDeAtajo(atajo: Atajo, hoy = new Date()): { desde: string; hasta: string } | null {
+  const y = hoy.getFullYear();
+  const m = hoy.getMonth();
+  const lunes = hoy.getDate() - ((hoy.getDay() + 6) % 7); // lunes de esta semana
+  switch (atajo) {
+    case "semana_pasada":
+      return { desde: aIso(new Date(y, m, lunes - 7)), hasta: aIso(new Date(y, m, lunes - 1)) };
+    case "esta_semana":
+      return { desde: aIso(new Date(y, m, lunes)), hasta: aIso(hoy) };
+    case "mes_pasado":
+      return { desde: aIso(new Date(y, m - 1, 1)), hasta: aIso(new Date(y, m, 0)) };
+    case "este_mes":
+      return { desde: aIso(new Date(y, m, 1)), hasta: aIso(hoy) };
+    default:
+      return null;
+  }
+}
+
+// ms de `creadoEn`: desde 00:00:00.000 del primer día hasta 23:59:59.999 del
+// último, en hora local del navegador.
+function rangoMs(desdeIso: string, hastaIso: string): { desde: number; hasta: number } {
+  const [y1, m1, d1] = desdeIso.split("-").map(Number);
+  const [y2, m2, d2] = hastaIso.split("-").map(Number);
+  return {
+    desde: new Date(y1, m1 - 1, d1, 0, 0, 0, 0).getTime(),
+    hasta: new Date(y2, m2 - 1, d2, 23, 59, 59, 999).getTime(),
+  };
+}
 
 export function AdminScreen() {
   const NEGOCIO = useNegocio();
@@ -26,6 +81,19 @@ export function AdminScreen() {
   const [cargandoMeta, setCargandoMeta] = useState(true);
   const [guardandoMeta, setGuardandoMeta] = useState(false);
   const [metaGuardada, setMetaGuardada] = useState(false);
+  const [atajo, setAtajo] = useState<Atajo>("semana_pasada");
+  const [otroDesde, setOtroDesde] = useState("");
+  const [otroHasta, setOtroHasta] = useState("");
+  const [generando, setGenerando] = useState(false);
+  const [errorReporte, setErrorReporte] = useState("");
+  const [listoReporte, setListoReporte] = useState("");
+
+  const rango =
+    atajo === "otro"
+      ? otroDesde && otroHasta && otroDesde <= otroHasta
+        ? { desde: otroDesde, hasta: otroHasta }
+        : null
+      : rangoDeAtajo(atajo);
 
   useEffect(() => {
     getMetaDiaria()
@@ -72,6 +140,43 @@ export function AdminScreen() {
     }
   }
 
+  async function descargarReporte() {
+    if (!rango) return;
+    setGenerando(true);
+    setErrorReporte("");
+    setListoReporte("");
+    try {
+      const { desde, hasta } = rangoMs(rango.desde, rango.hasta);
+      const [ventas, devoluciones, emprendedores] = await Promise.all([
+        ventasEnRango(desde, hasta),
+        devolucionesEnRango(desde, hasta),
+        listarEmprendedores(true),
+      ]);
+      const negocio = NEGOCIO.nombre || NEGOCIO.slug;
+      const r = armarReporteVentas({
+        negocio,
+        desde: rango.desde,
+        hasta: rango.hasta,
+        ventas,
+        devoluciones,
+        emprendedores,
+      });
+      XLSX.writeFile(r.libro, nombreArchivoReporte(negocio, rango.desde, rango.hasta));
+      const n = r.sinIdentificar.lineas;
+      const sinId = n
+        ? ` · ${n} ${n === 1 ? "línea" : "líneas"} sin emprendedor identificado (${money(r.sinIdentificar.monto)})`
+        : "";
+      setListoReporte(
+        `Descargado: ${r.ventasValidas} ${r.ventasValidas === 1 ? "venta" : "ventas"}, neto ${money(r.neto)}${sinId}.`
+      );
+    } catch (e) {
+      const detalle = e instanceof Error && e.message ? ` (${e.message})` : "";
+      setErrorReporte(`No se pudo generar el reporte. Revisa la conexión e inténtalo de nuevo.${detalle}`);
+    } finally {
+      setGenerando(false);
+    }
+  }
+
   function exportarCatalogo() {
     const ws = XLSX.utils.json_to_sheet(seed as Producto[]);
     const wb = XLSX.utils.book_new();
@@ -86,7 +191,7 @@ export function AdminScreen() {
           <Settings className="text-cyan-600" size={22} /> Administración
         </h1>
         <p className="text-sm text-slate-500">
-          Emprendedores y respaldos de tus datos a archivo.
+          Emprendedores, reporte de ventas y respaldos de tus datos a archivo.
         </p>
       </div>
 
@@ -163,6 +268,78 @@ export function AdminScreen() {
             <span>Semana (×7): <strong className="text-slate-800">{money(meta * 7)}</strong></span>
             <span>Mes (×30): <strong className="text-slate-800">{money(meta * 30)}</strong></span>
           </div>
+        )}
+      </div>
+
+      {/* Reporte de ventas por período (el Excel para liquidar a cada emprendedor) */}
+      <div className="bg-white rounded-xl shadow p-4 space-y-3 anim-in">
+        <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+          <CalendarRange size={18} className="text-cyan-600" /> Reporte de ventas
+        </h2>
+        <p className="text-sm text-slate-500">
+          Excel con el resumen, lo vendido por cada emprendedor y el detalle de cada venta del
+          período. En las ventas manuales el emprendedor se deduce de lo escrito en la venta.
+        </p>
+        <div className="flex gap-2 flex-wrap">
+          {ATAJOS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => {
+                setAtajo(a.id);
+                setErrorReporte("");
+                setListoReporte("");
+              }}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold border-2 ${
+                atajo === a.id
+                  ? "border-cyan-600 bg-cyan-50 text-cyan-800"
+                  : "border-slate-200 text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+        {atajo === "otro" && (
+          <div className="grid grid-cols-2 gap-3 max-w-md">
+            <label className="text-sm">
+              <span className="text-slate-500">Desde</span>
+              <SelectorFecha value={otroDesde} onChange={setOtroDesde} className="mt-1" />
+            </label>
+            <label className="text-sm">
+              <span className="text-slate-500">Hasta</span>
+              <SelectorFecha value={otroHasta} onChange={setOtroHasta} className="mt-1" />
+            </label>
+          </div>
+        )}
+        <p className="text-sm text-slate-700">
+          {rango ? (
+            <>
+              Período: <strong>{describirRango(rango.desde, rango.hasta)}</strong>
+            </>
+          ) : otroDesde && otroHasta ? (
+            <span className="text-amber-600">La fecha “Desde” es posterior a “Hasta”.</span>
+          ) : (
+            <span className="text-slate-500">Elige las fechas desde y hasta.</span>
+          )}
+        </p>
+        <button
+          onClick={descargarReporte}
+          disabled={!rango || generando}
+          className="btn-accion bg-cyan-600 hover:bg-cyan-700 text-white font-semibold rounded-lg px-4 py-2.5 flex items-center gap-2 disabled:opacity-50"
+        >
+          <Download size={18} /> {generando ? "Generando…" : "Descargar Excel"}
+        </button>
+        {errorReporte && (
+          <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+            <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+            <span>{errorReporte}</span>
+          </div>
+        )}
+        {listoReporte && !errorReporte && (
+          <p className="text-sm text-emerald-700 flex items-center gap-1.5">
+            <Check size={16} className="shrink-0" /> {listoReporte}
+          </p>
         )}
       </div>
 
