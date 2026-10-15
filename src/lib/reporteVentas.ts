@@ -58,6 +58,8 @@ const SIN_IDENTIFICAR = "(sin identificar)";
 const COMO_CODIGO = "Código del producto";
 const COMO_DEDUCIDO = "Deducido de lo escrito en la venta manual";
 const COMO_SIN = "Venta manual sin código reconocible";
+/** La línea trae código, pero su prefijo no es de ningún emprendedor (p. ej. PATI-). */
+const COMO_CODIGO_SIN_EMP = "Código sin emprendedor asignado";
 
 // ===== Deducción del emprendedor en ventas manuales =====
 // Lógica validada a mano el 05-10-2026 sobre el histórico completo. Si se
@@ -237,7 +239,8 @@ export function armarReporteVentas(entrada: EntradaReporte): ReporteVentas {
     const n = nombreEmp(l);
     if (n !== "(venta manual)" && n !== "(sin emprendedor)") return { emprendedor: n, como: COMO_CODIGO };
     const d = deducir(l.descripcion);
-    return d ? { emprendedor: d, como: COMO_DEDUCIDO } : { emprendedor: SIN_IDENTIFICAR, como: COMO_SIN };
+    if (d) return { emprendedor: d, como: COMO_DEDUCIDO };
+    return { emprendedor: SIN_IDENTIFICAR, como: n === "(venta manual)" ? COMO_SIN : COMO_CODIGO_SIN_EMP };
   };
 
   // ===== Ventas (detalle) y agregados =====
